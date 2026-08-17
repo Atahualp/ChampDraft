@@ -34,6 +34,7 @@ html[data-theme=dark]{--ink:#0F1216;--surface:#171C22;--surface2:#1E252D;--line:
   --pos:#4FD1A5;--neg:#E8695E;--qb:#B98CE8;--rb:#5FBF8E;--wr:#4FA8DB;--te:#E0A03D;--k:#8E9AA8;--dst:#C97F62;}
 
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{overscroll-behavior-y:none}
 body{margin:0;background:var(--ink);color:var(--text);font-family:var(--sans);
   font-size:15px;line-height:1.45;overscroll-behavior-y:none;
   padding-bottom:calc(58px + env(safe-area-inset-bottom))}
@@ -112,7 +113,7 @@ header{position:sticky;top:0;z-index:40;background:var(--ink);
   border-radius:16px 16px 0 0;border-top:1px solid var(--line);
   padding:14px 14px calc(18px + env(safe-area-inset-bottom));
   transform:translateY(102%);transition:transform .22s cubic-bezier(.2,.8,.25,1);
-  max-height:86vh;overflow-y:auto}
+  max-height:86vh;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y}
 .sheet.on{transform:none}
 .grab{width:34px;height:4px;background:var(--line);border-radius:2px;margin:0 auto 12px}
 .sheet h3{margin:0 0 2px;font-size:18px}
@@ -165,7 +166,8 @@ label.f input,label.f select{width:100%;min-height:var(--tap);background:var(--s
   text-transform:uppercase;padding:2px 7px;border-radius:999px;background:var(--surface2);
   color:var(--dim);margin-left:6px}
 .pilllive{background:var(--accent);color:var(--accent-ink)}
-.log{font-family:var(--mono);font-size:11.5px;color:var(--dim);max-height:180px;overflow-y:auto}
+.log{font-family:var(--mono);font-size:11.5px;color:var(--dim);max-height:180px;
+  overflow-y:auto;overscroll-behavior:contain}
 .log div{padding:2px 0;border-bottom:1px solid var(--line)}
 .gradewrap{display:flex;align-items:center;gap:14px}
 .gradebig{font-family:var(--mono);font-size:44px;font-weight:800;letter-spacing:-.05em;
@@ -197,7 +199,8 @@ label.f input,label.f select{width:100%;min-height:var(--tap);background:var(--s
 .byenum{font-size:10px;color:var(--text);height:13px}
 .byewk{font-size:9px;color:var(--faint)}
 /* draft board grid */
-.gridscroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);
+.gridscroll{overflow-x:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
+  border:1px solid var(--line);
   border-radius:var(--r);background:var(--surface)}
 .dgrid{border-collapse:collapse;font-size:10px;width:max-content}
 .dgrid th,.dgrid td{border:1px solid var(--line);padding:3px 4px;min-width:66px;
@@ -1322,6 +1325,36 @@ $('#themeBtn').onclick=()=>{
   else document.documentElement.removeAttribute('data-theme');
 };
 window.addEventListener('keydown',e=>{if(e.key==='Escape') closeSheet();});
+
+/* Pull down on the sheet to dismiss it. Without this the gesture escapes to
+   the page and Chrome treats it as pull-to-refresh. */
+(function(){
+  const sh=$('#sheet'); if(!sh) return;
+  let y0=0, dy=0, dragging=false;
+  sh.addEventListener('touchstart',e=>{
+    if(sh.scrollTop>0||e.touches.length!==1) return;
+    y0=e.touches[0].clientY; dy=0; dragging=true;
+    sh.style.transition='none';
+  },{passive:true});
+  sh.addEventListener('touchmove',e=>{
+    if(!dragging) return;
+    dy=e.touches[0].clientY-y0;
+    if(dy<=0){ sh.style.transform=''; return; }      // scrolling up: hand it back
+    if(sh.scrollTop>0){ dragging=false; sh.style.transform=''; return; }
+    sh.style.transform=`translateY(${dy}px)`;
+    $('#scrim').style.opacity=String(Math.max(0,1-dy/420));
+    if(e.cancelable) e.preventDefault();             // and no page refresh
+  },{passive:false});
+  const end=()=>{
+    if(!dragging) return;
+    dragging=false;
+    sh.style.transition=''; sh.style.transform='';
+    $('#scrim').style.opacity='';
+    if(dy>90) closeSheet();
+  };
+  sh.addEventListener('touchend',end);
+  sh.addEventListener('touchcancel',end);
+})();
 
 (async function init(){
   const list=await storage.listSessions();
