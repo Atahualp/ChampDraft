@@ -752,7 +752,7 @@ async function simToMyPick(){
     const idx=teamOnPick(n), p=botPick(idx);
     if(!p){simming=false;break;}
     await doPick(p.id,idx);
-    await new Promise(r=>setTimeout(r,900));
+    await new Promise(r=>setTimeout(r,500));
   }
   $('#simBtn').textContent='▶ Sim to my pick';
   render();
