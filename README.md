@@ -26,6 +26,24 @@ After first load it runs fully offline. When you update the app, bump `CACHE` in
 
 **Mock draft.** "Sim to my pick" auto-drafts every other team at roughly one pick per second and stops when you're up. Each bot gets a random style at draft creation — chalk (follows ADP), needs (fills holes), sharp (drafts by VORP), gambler (reaches wildly). Styles show on the League tab.
 
+## Validation
+
+Everything below came from running full 192-pick drafts headlessly against the same engine the app ships.
+
+**Survival calibration.** Predicted survival probability was checked against what actually happened, across 40 drafts. Mean error is 1.9 percentage points, tracking closely from the 10% bucket to the 90% bucket. Two earlier models were thrown out getting here: one biased by kickers and defenses sitting unclaimed in the ADP ordering, and one that assumed teams draft in strict rank order when they actually draft for need.
+
+**Strategy benchmark, 60 drafts with identical bot behaviour:**
+
+| Strategy | Starting lineup points |
+|---|---|
+| This engine | 1912 |
+| Best VORP + roster needs | 1912 |
+| Best available by ADP | 1759 |
+
+Read that honestly. **The engine beats ADP-following by about 9%, and ties simple VORP-plus-needs exactly.** The value is in scoring your league correctly — six-point passing TDs, the reception buckets, two WR starters — not in the cost-of-waiting timing layer, which doesn't change the pick when opponents draft near ADP. Against a sharper room it should matter more, and the survival numbers are useful to read even when they don't flip the top suggestion.
+
+**Roster shape.** Averaging around 2.8 QB / 2.9 RB / 4.1 WR / 4.2 TE / 1 K / 1 DST. The tight end count is higher than good practice, and the simulation can't settle it: bench composition barely moves starting points when nobody gets hurt and no bye weeks are modelled. Treat late-round suggestions as advisory and use your own judgement on depth.
+
 ## Known gaps
 
 - **Kickers and defenses can't be scored properly.** The projections have no field-goal distance splits, and DST points-allowed and yards-allowed are season totals against per-game brackets. Both are ranked by consensus and marked `est`. Everything else is real.
@@ -34,6 +52,8 @@ After first load it runs fully offline. When you update the app, bump `CACHE` in
 - **Fumbles score zero**, matching what the league settings showed. If a fumble category does exist, set `fumbleLost` in Setup.
 - **75 of 381 players have no ADP** — mostly deep bench. They sort by consensus rank instead and never trigger steal flags.
 - The per-game coefficients of variation (0.70 receiving, 0.55 rushing, 0.28 passing) are reasoned estimates, not fitted. They affect ordering among receivers more than anything else.
+- **Bench depth is the weakest part of the engine.** VORP measures value above the last starter, which makes it a poor yardstick for players who'll never start. There's a discount based on effective starting slots, but the simulation can't tell whether it's calibrated.
+- No injuries or bye weeks in the mock, so it overstates how little bench quality matters.
 
 ## Worth testing before draft night
 

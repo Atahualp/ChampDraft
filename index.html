@@ -393,39 +393,73 @@ function rescoreAll(){
   });
   scored.sort((a,b)=>b.vorp-a.vorp);
   scored.forEach((x,i)=>x.ovr=i+1);
+  rebuildDraftRanks();
 }
 
 /* ---------- 4. SURVIVAL + COST OF WAITING (spec §5) ------------ */
-function marketRank(p){ return p.a!=null?p.a:(p.cr!=null?p.cr:360); }
-/* live drift: are players going ahead of or behind their market rank tonight? */
-function driftFactor(){
-  const rec=S.picks.filter(p=>p.playerId).slice(-24);
-  if(rec.length<6) return 0;
-  let sum=0,n=0;
-  rec.forEach(p=>{const pl=byId(p.playerId); if(!pl)return;
-    sum+=(marketRank(pl)-p.pickNumber); n++;});
-  return n?sum/n:0;                        // + means the room is drafting early
+function rawMarketRank(p){ return p.a!=null?p.a:(p.cr!=null?p.cr:360); }
+/* Kickers and defenses sit high in raw ADP but nobody takes them until the end.
+   Leaving them in the ordering makes every skill player look like a reach and
+   poisons the drift estimate, so rank the pool by when players actually go. */
+function rebuildDraftRanks(){
+  const skill=scored.filter(p=>p.p!=='K'&&p.p!=='DST')
+    .sort((a,b)=>rawMarketRank(a)-rawMarketRank(b));
+  skill.forEach((p,i)=>p.dr=i+1);
+  const lateStart=Math.max(skill.length,totalPicks()-S.numTeams*2);
+  scored.filter(p=>p.p==='K'||p.p==='DST')
+    .sort((a,b)=>rawMarketRank(a)-rawMarketRank(b))
+    .forEach((p,i)=>p.dr=lateStart+i+1);
 }
-function survival(pl,atPick,drift){
-  const mr=marketRank(pl)-drift;
-  const sigma=Math.max(4,0.25*mr);
-  const z=(atPick-mr)/sigma;
-  return 1-normCdf(z);                     // P(still on the board at atPick)
+function marketRank(p){ return p.dr!=null?p.dr:rawMarketRank(p); }
+/* Survival: a player is taken when enough picks TARGETING HIS POSITION happen
+   before he does. Teams draft for need, not strict rank order, so a top-ranked
+   player often survives simply because nobody picking soon wants that position.
+   We count expected positional demand across the intervening picks and compare
+   it to how many players at his position sit ahead of him. */
+function survivalContext(avail,fromPick,toPick){
+  const posQ={};
+  POSITIONS.forEach(pos=>{
+    avail.filter(x=>x.p===pos).sort((a,b)=>marketRank(a)-marketRank(b))
+      .forEach((x,i)=>posQ[x.id]=i+1);
+  });
+  const demand={}; POSITIONS.forEach(p=>demand[p]=0);
+  const R=totalRounds();
+  for(let k=fromPick;k<toPick&&k<=totalPicks();k++){
+    const idx=teamOnPick(k); if(idx==null) continue;
+    const st=needsOf(idx), left=R-st.filled, w={};
+    POSITIONS.forEach(p=>{
+      w[p]=0;
+      if(!canDraft(idx,p)) return;
+      if(p==='K'||p==='DST'){ if(st.need[p]>0&&left<=4) w[p]=0.9; return; }
+      if(st.need[p]>0) w[p]=1.0;
+      else if(st.flex>0&&['RB','WR','TE'].includes(p)) w[p]=0.65;
+      else w[p]=0.22;                       // best-available / bench depth
+    });
+    // each pick takes exactly ONE player, so its weight must sum to 1
+    const tot=POSITIONS.reduce((a,p)=>a+w[p],0)||1;
+    POSITIONS.forEach(p=>demand[p]+=w[p]/tot);
+  }
+  return {posQ,demand};
 }
 const normCdf=z=>{const t=1/(1+0.2316419*Math.abs(z));
   const d=0.3989423*Math.exp(-z*z/2);
   let p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));
   return z>0?1-p:p;};
-
-function costOfWaiting(avail,nextPick,drift){
+function survival(pl,ctx){
+  const j=ctx.posQ[pl.id]; if(j==null) return 1;
+  const d=ctx.demand[pl.p]||0;
+  const sd=Math.max(1.1,1.35*Math.sqrt(d+1));
+  return Math.min(1,Math.max(0,1-normCdf((d-j+0.5)/sd)));
+}
+function costOfWaiting(avail,ctx){
   const out={};
   POSITIONS.forEach(pos=>{
     const arr=avail.filter(p=>p.p===pos).sort((a,b)=>b.vorp-a.vorp).slice(0,25);
     if(!arr.length){out[pos]={now:0,later:0,cost:0,best:null};return;}
     const now=arr[0].vorp;
     let later=0,gone=1;
-    for(const p of arr){ const s=survival(p,nextPick,drift);
-      later+=p.vorp*s*gone; gone*=(1-s); if(gone<0.001)break; }
+    for(const p of arr){ const s=survival(p,ctx);
+      later+=p.vorp*s*gone; gone*=(1-s); if(gone<0.002)break; }
     out[pos]={now,later,cost:Math.max(0,now-later),best:arr[0]};
   });
   return out;
@@ -458,7 +492,8 @@ function canDraft(idx,pos){
 function suggestions(){
   const drafted=draftedIds(), avail=scored.filter(p=>!drafted.has(p.id)&&!S.skip.includes(p.id));
   const pickNo=nextPickNumber(), nxt=myNextPick(pickNo+1)||totalPicks();
-  const drift=driftFactor(), cw=costOfWaiting(avail,nxt,drift);
+  const ctx=survivalContext(avail,pickNo+1,nxt);
+  const cw=costOfWaiting(avail,ctx);
   const {cnt,need,flex,filled}=needsOf(S.myTeamIdx);
   const roundsLeft=totalRounds()-filled;
   const stillRequired=POSITIONS.reduce((s,p)=>s+need[p],0)+flex;
@@ -474,20 +509,36 @@ function suggestions(){
     const c=cw[p.p]?cw[p.p].cost:0;
     const needBonus=(need[p.p]>0?18:0)+((flex>0&&isFlexEligible(p.p))?8:0);
     // stop hoarding a position once starters and a sensible backup are covered
-    // a backup you'll rarely start is worth a fraction of his raw VORP
-    const surplus=cnt[p.p]-(S.rosterSlots[p.p]||0)-((flex>0&&isFlexEligible(p.p))?1:0);
-    const useful=surplus>=1?1/(1+surplus*0.95):1;
-    const surv=survival(p,nxt,drift);
-    return {p,score:p.vorp*useful+c*0.85+needBonus-surv*12,cost:c,surv};
+    /* VORP measures value above the last STARTER, so it can't be compared
+       across positions for bench players: this league starts ~2.5 RB but only
+       1 TE, so a 3rd RB is nearly a starter while a 3rd TE never plays.
+       Discount by effective starting slots, taken from the same flex
+       resolution that produced the baselines. */
+    const ss=Math.max(0.5,(baseIdx[p.p]||S.numTeams)/S.numTeams);
+    const surplus=cnt[p.p]-ss;
+    const useful=surplus<=0?1:ss/(ss+surplus*2);
+    const surv=survival(p,ctx);
+    /* Urgency applies only to a slot still to be filled. Once a position is
+       covered, extra bodies are bench depth and there is nothing to be late for. */
+    const urgent=(need[p.p]>0||(flex>0&&isFlexEligible(p.p)))?c*0.85:0;
+    // only discount value ABOVE replacement — scaling a negative VORP would
+    // make a deep bench player look better the less useful he is
+    const v=p.vorp>0?p.vorp*useful:p.vorp;
+    return {p,score:v+urgent*useful+needBonus-surv*12,cost:c,surv};
   }).sort((a,b)=>b.score-a.score).slice(0,3)
-    .map(x=>({...x,why:whyText(x,cw,avail)}));
+    .map(x=>({...x,why:whyText(x,cw,avail,nxt)}));
 }
-function whyText(x,cw,avail){
+/* rank among what's actually left at that position — a preseason rank is
+   meaningless once forty receivers are off the board */
+function availRank(pl,avail){
+  return avail.filter(p=>p.p===pl.p&&p.vorp>pl.vorp).length+1;
+}
+function whyText(x,cw,avail,nxt){
   const p=x.p, bits=[];
-  bits.push(`${p.p}${posRankMap[p.id]} left`);
+  bits.push(`best ${p.p} left`.replace('best',availRank(p,avail)===1?'best':`#${availRank(p,avail)}`));
   if(p.a!=null){ const d=Math.round(nextPickNumber()-p.a);
     if(d>=8) bits.push(`${d} past ADP`); }
-  bits.push(`${Math.round(x.surv*100)}% to last`);
+  bits.push(`${Math.round(x.surv*100)}% to survive to ${nxt}`);
   if(x.cost>6) bits.push(`waiting costs ${Math.round(x.cost)}`);
   const cl=cliff(avail,p.p);
   if(cl&&cl.count<=3) bits.push(`${cl.count} left before −${cl.drop}`);
@@ -512,10 +563,12 @@ function botPick(idx){
     if(p.p==='K'||p.p==='DST'){ if(need[p.p]<=0||roundsLeft>4) continue; }
     else if(mustFill && !(need[p.p]>0 || (flex>0 && isFlexEligible(p.p)))) continue;
     const mr=marketRank(p);
-    const surplus=cnt[p.p]-(S.rosterSlots[p.p]||0)-((flex>0&&isFlexEligible(p.p))?1:0);
-    const useful=surplus>=1?1/(1+surplus*0.95):1;
+    const ss=Math.max(0.5,(baseIdx[p.p]||S.numTeams)/S.numTeams);
+    const surplus=cnt[p.p]-ss;
+    const useful=surplus<=0?1:ss/(ss+surplus*2);
     let sc;
-    if(style==='sharp') sc=p.vorp*useful+(need[p.p]>0?25:0)+(flex>0&&isFlexEligible(p.p)?10:0);
+    if(style==='sharp') sc=(p.vorp>0?p.vorp*useful:p.vorp)+(need[p.p]>0?25:0)+(flex>0&&isFlexEligible(p.p)?10:0);
+    else if(style==='needs'&&surplus>0) sc=(400-mr)-surplus*55;
     else sc=(400-mr)-(surplus>=1?surplus*38:0)+(style==='needs'?(need[p.p]>0?30:0):0);
     sc+=(Math.random()-0.5)*noise*(style==='sharp'?2.5:1);
     if(sc>bs){bs=sc;best=p;}
@@ -621,8 +674,9 @@ function openSheet(id){
   const drafted=draftedIds(), isGone=drafted.has(id);
   const pick=S.picks.find(x=>x.playerId===id);
   const n=nextPickNumber(), diff=p.a!=null?Math.round(n-p.a):null;
-  const nxt=myNextPick(n+1), drift=driftFactor();
-  const surv=nxt?Math.round(survival(p,nxt,drift)*100):null;
+  const nxt=myNextPick(n+1);
+  const av=scored.filter(x=>!drafted.has(x.id));
+  const surv=nxt?Math.round(survival(p,survivalContext(av,n+1,nxt))*100):null;
   let h=`<div class="grab"></div>
     <h3>${esc(p.n)} <span class="pill">${p.p}${posRankMap[p.id]||''}</span></h3>
     <div class="sub2">${esc(p.t)||'FA'}${p.b?` · bye ${p.b}`:''}
@@ -634,7 +688,7 @@ function openSheet(id){
     </div>`;
   if(p.pts.bonusShare>0.05) h+=`<div class="hint">${Math.round(p.pts.bonusShare*100)}% of this total is modeled from per-game distributions, not exact.</div>`;
   if(p.p==='K'||p.p==='DST') h+=`<div class="hint">Scoring incomplete: no FG distance splits / per-game defensive brackets. Rank by consensus instead.</div>`;
-  if(surv!=null&&!isGone) h+=`<div class="hint">About ${surv}% likely to still be there at your next pick (${nxt}).</div>`;
+  if(surv!=null&&!isGone) h+=`<div class="hint">About ${surv}% likely to survive to your next pick (${nxt}).</div>`;
   if(isGone){
     h+=`<button class="act danger" data-a="undo">Mark available again</button>
         <div class="hint">Taken at pick ${pick?pick.pickNumber:'?'} by ${pick?esc(teamName(pick.teamIdx)):'?'}</div>`;
