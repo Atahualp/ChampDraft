@@ -36,13 +36,15 @@ Everything below came from running full 192-pick drafts headlessly against the s
 
 | Strategy | Starting lineup points |
 |---|---|
-| This engine | 1912 |
-| Best VORP + roster needs | 1912 |
-| Best available by ADP | 1759 |
+| This engine | 1921 |
+| Best VORP + roster needs | 1904 |
+| Best available by ADP | 1747 |
 
-Read that honestly. **The engine beats ADP-following by about 9%, and ties simple VORP-plus-needs exactly.** The value is in scoring your league correctly — six-point passing TDs, the reception buckets, two WR starters — not in the cost-of-waiting timing layer, which doesn't change the pick when opponents draft near ADP. Against a sharper room it should matter more, and the survival numbers are useful to read even when they don't flip the top suggestion.
+**The engine beats ADP-following by about 10%, and simple VORP-plus-needs by 17 points.** Most of the value is in scoring your league correctly — six-point passing TDs, the reception buckets, two WR starters — rather than in the timing layer, which only separates from plain VORP once roster construction starts to bind.
 
-**Roster shape.** Averaging around 2.8 QB / 2.9 RB / 4.1 WR / 4.2 TE / 1 K / 1 DST. The tight end count is higher than good practice, and the simulation can't settle it: bench composition barely moves starting points when nobody gets hurt and no bye weeks are modelled. Treat late-round suggestions as advisory and use your own judgement on depth.
+**Roster shape.** Averaging around 2.4 QB / 3.9 RB / 4.7 WR / 3.1 TE / 1 K / 1 DST. Tight end still runs about one body high, but the surplus is concentrated in the final two rounds: across 30 drafts, 30 of 39 surplus tight ends were taken in rounds 15–16, and none before round 11. Late-round suggestions are advisory — use your own judgement on bench depth.
+
+**Why bench suggestions are the weak spot.** VORP measures value above the last *starter*, so it stops being comparable between positions once you're drafting bench. Worse, it's not comparable below replacement either: leftover receivers sit near −40 because the WR curve falls off a cliff past WR30, while leftover tight ends sit near −15, so tight ends always look less bad. Two corrections are applied — a multiplier that discounts value above replacement by effective starting slots, and a flat penalty for stacking a position past those slots, both based on what the player *would be* on the roster rather than what's already there. Neither fully solves it, and no parameter sweep moved the tight end count, which suggests bench valuation needs a different model rather than tuning.
 
 ## Known gaps
 
