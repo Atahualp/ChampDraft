@@ -515,16 +515,21 @@ function suggestions(){
        Discount by effective starting slots, taken from the same flex
        resolution that produced the baselines. */
     const ss=Math.max(0.5,(baseIdx[p.p]||S.numTeams)/S.numTeams);
-    const surplus=cnt[p.p]-ss;
+    // what he'd BE on the roster once drafted, not what's already there
+    const surplus=(cnt[p.p]+1)-ss;
     const useful=surplus<=0?1:ss/(ss+surplus*2);
     const surv=survival(p,ctx);
     /* Urgency applies only to a slot still to be filled. Once a position is
        covered, extra bodies are bench depth and there is nothing to be late for. */
     const urgent=(need[p.p]>0||(flex>0&&isFlexEligible(p.p)))?c*0.85:0;
-    // only discount value ABOVE replacement — scaling a negative VORP would
-    // make a deep bench player look better the less useful he is
+    /* Two separate corrections, because one can't do both jobs.
+       The MULTIPLIER discounts value above replacement (a 2nd TE is worth a
+       fraction of his VORP). It does nothing at or below zero, so an ADDITIVE
+       penalty is also needed — otherwise a 3rd TE at 0 VORP outranks a needed
+       WR at −5, which is how this showed up in a live draft. */
     const v=p.vorp>0?p.vorp*useful:p.vorp;
-    return {p,score:v+urgent*useful+needBonus-surv*12,cost:c,surv};
+    const stackPenalty=surplus>0?surplus*20:0;
+    return {p,score:v+urgent*useful+needBonus-stackPenalty-surv*12,cost:c,surv};
   }).sort((a,b)=>b.score-a.score).slice(0,3)
     .map(x=>({...x,why:whyText(x,cw,avail,nxt)}));
 }
@@ -564,10 +569,11 @@ function botPick(idx){
     else if(mustFill && !(need[p.p]>0 || (flex>0 && isFlexEligible(p.p)))) continue;
     const mr=marketRank(p);
     const ss=Math.max(0.5,(baseIdx[p.p]||S.numTeams)/S.numTeams);
-    const surplus=cnt[p.p]-ss;
+    const surplus=(cnt[p.p]+1)-ss;
     const useful=surplus<=0?1:ss/(ss+surplus*2);
     let sc;
-    if(style==='sharp') sc=(p.vorp>0?p.vorp*useful:p.vorp)+(need[p.p]>0?25:0)+(flex>0&&isFlexEligible(p.p)?10:0);
+    if(style==='sharp') sc=(p.vorp>0?p.vorp*useful:p.vorp)-(surplus>0?surplus*20:0)
+                          +(need[p.p]>0?25:0)+(flex>0&&isFlexEligible(p.p)?10:0);
     else if(style==='needs'&&surplus>0) sc=(400-mr)-surplus*55;
     else sc=(400-mr)-(surplus>=1?surplus*38:0)+(style==='needs'?(need[p.p]>0?30:0):0);
     sc+=(Math.random()-0.5)*noise*(style==='sharp'?2.5:1);
