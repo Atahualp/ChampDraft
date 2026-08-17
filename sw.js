@@ -1,6 +1,6 @@
 /* Draft Room service worker — app shell cache, offline-first.
    Draft rooms have terrible connectivity; the app must survive it. */
-const CACHE='draftroom-v3';
+const CACHE='draftroom-v7';
 const SHELL=['./','./index.html','./manifest.json','./icon-192.png','./icon-512.png'];
 self.addEventListener('install',e=>{
   e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting()));

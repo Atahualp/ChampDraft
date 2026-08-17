@@ -24,7 +24,19 @@ After first load it runs fully offline. When you update the app, bump `CACHE` in
 
 **Suggestions** use cost of waiting: for each position, the best available now versus the expected best survivor at your next pick, given a survival model over ADP with live drift correction. Backups are discounted by expected starts, so it won't hand you four quarterbacks.
 
-**Mock draft.** "Sim to my pick" auto-drafts every other team at roughly one pick per second and stops when you're up. Each bot gets a random style at draft creation — chalk (follows ADP), needs (fills holes), sharp (drafts by VORP), gambler (reaches wildly). Styles show on the League tab.
+**Watchlist.** Star players from the pick sheet. They pin to the top of the board with a live survival percentage against your next pick, sorted most-endangered first, with a count of how many are about to disappear. Players who get taken move to a "Gone" line rather than vanishing.
+
+**Handcuff and stack flags.** `HC` marks a back who shares a backfield with one of yours — injury insurance. `STACK` marks a receiver or tight end catching passes from your quarterback, whose big weeks arrive together with his. Both derived from the team field, no extra data.
+
+**Draft board grid.** The League tab toggles between rosters and a full rounds-by-teams wall, snake order intact, your column highlighted, colour-coded by position. Scrolls sideways.
+
+**Bye-week planner.** A bar strip on My Team showing how many projected starters are off each week, flagging any week with three or more while you can still draft around it. The pick sheet also warns when a player shares a bye with two starters you already have.
+
+**Export.** One button in Recap copies the whole draft — your lineup, bench, league table, and all 192 picks — as plain text for the league chat.
+
+**Post-draft recap and grades.** A fifth tab that fills in as the draft runs. Shows your optimal starting lineup, a letter grade and league rank based on projected starting points, which positions you're strong and weak at versus the rest of the league, your best value picks and biggest reaches against ADP, how far your roster falls if a starter goes down, bye-week collisions among starters, and a full league table. Grades also appear on each team card in the League tab. All computed locally — no network, no API.
+
+**Mock draft.** "Auto-sim" is a mode, not a one-shot. Arm it and the other eleven teams draft themselves at roughly two picks per second, halting the moment you're on the clock and resuming automatically once you make your selection — so a full mock takes about as long as your own decisions. Undo disarms it, so you can rewind without it immediately re-drafting what you just undid. Each bot gets a random style at draft creation — chalk (follows ADP), needs (fills holes), sharp (drafts by VORP), gambler (reaches wildly). Styles show on the League tab.
 
 ## Validation
 
@@ -42,9 +54,21 @@ Everything below came from running full 192-pick drafts headlessly against the s
 
 **The engine beats ADP-following by about 10%, and simple VORP-plus-needs by 17 points.** Most of the value is in scoring your league correctly — six-point passing TDs, the reception buckets, two WR starters — rather than in the timing layer, which only separates from plain VORP once roster construction starts to bind.
 
-**Roster shape.** Averaging around 2.4 QB / 3.9 RB / 4.7 WR / 3.1 TE / 1 K / 1 DST. Tight end still runs about one body high, but the surplus is concentrated in the final two rounds: across 30 drafts, 30 of 39 surplus tight ends were taken in rounds 15–16, and none before round 11. Late-round suggestions are advisory — use your own judgement on bench depth.
+**Roster shape.** Averaging 2.0 QB / 4.2 RB / 5.8 WR / 2.0 TE / 1 K / 1 DST. Across 30 drafts, **zero** surplus tight ends were taken.
 
-**Why bench suggestions are the weak spot.** VORP measures value above the last *starter*, so it stops being comparable between positions once you're drafting bench. Worse, it's not comparable below replacement either: leftover receivers sit near −40 because the WR curve falls off a cliff past WR30, while leftover tight ends sit near −15, so tight ends always look less bad. Two corrections are applied — a multiplier that discounts value above replacement by effective starting slots, and a flat penalty for stacking a position past those slots, both based on what the player *would be* on the roster rather than what's already there. Neither fully solves it, and no parameter sweep moved the tight end count, which suggests bench valuation needs a different model rather than tuning.
+**How bench depth is handled.** VORP measures value above the last *starter*, so it stops being comparable between positions once you're drafting bench — and below replacement it's actively misleading. Leftover receivers read as −80 because the WR curve collapses past WR30; leftover tight ends read as −30 because the TE curve is shallow past TE12. So tight ends always looked "least bad" even though a third TE can never enter the lineup.
+
+Three corrections work together:
+
+1. A multiplier discounting value above replacement by effective starting slots (this league starts ~2.5 RB but 1 TE)
+2. A flat penalty for stacking past those slots — needed because a multiplier does nothing at zero
+3. A hard cap at single-start positions: no third QB or TE unless the player is genuinely above replacement
+
+All three use the slot the player *would occupy* once drafted, not the current roster count. Kickers and defenses are never suggested beyond one.
+
+## Reading the grades
+
+Grades are **relative to the eleven other teams in that draft**, not an absolute scale — someone always finishes last, and a D in a sharp room may be a better roster than an A in a weak one. They rest on consensus projections, which are deliberately middle-of-the-road, and kicker and defense totals are incomplete. Treat the grade as a conversation starter and the positional breakdown as the useful part: "your RBs are 22 points above league average, your WRs 7 below" is actionable in a way that a letter isn't.
 
 ## Known gaps
 
