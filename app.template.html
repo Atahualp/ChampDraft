@@ -309,7 +309,7 @@ label.f input,label.f select{width:100%;min-height:var(--tap);background:var(--s
    Player data and its labels live in PLAYERS / META below — swapping sources
    is a data change, never a code change.
    ============================================================ */
-const BUILD='12';   // keep in step with CACHE in sw.js
+const BUILD='13';   // keep in step with CACHE in sw.js
 const PLAYERS = /*__PLAYERS__*/[];
 /* Where the numbers came from. Everything user-visible reads its label from
    here, so swapping data sources is a data change, not a code change. */
@@ -587,7 +587,10 @@ const normCdf=z=>{const t=1/(1+0.2316419*Math.abs(z));
 function survival(pl,ctx){
   const j=ctx.posQ[pl.id]; if(j==null) return 1;
   const d=ctx.demand[pl.p]||0;
-  const sd=Math.max(1.1,1.35*Math.sqrt(d+1));
+  if(d<=0) return 1;                 // FIX: zero intervening demand is certainty,
+                                     // not a distribution — at the snake turn the
+                                     // old floor gave the top player only 64%
+  const sd=Math.max(1.1,1.9*Math.sqrt(d));
   return Math.min(1,Math.max(0,1-normCdf((d-j+0.5)/sd)));
 }
 function costOfWaiting(avail,ctx){
@@ -646,50 +649,80 @@ function suggestions(){
   const drafted=draftedIds(), avail=scored.filter(p=>!drafted.has(p.id)&&!S.skip.includes(p.id));
   const pickNo=nextPickNumber(), nxt=myNextPick(pickNo+1)||totalPicks();
   const ctx=survivalContext(avail,pickNo+1,nxt);
-  const cw=costOfWaiting(avail,ctx);
+  const cw=costOfWaiting(avail,ctx);          // still shown in whyText
   const {cnt,need,flex,filled}=needsOf(S.myTeamIdx);
   const roundsLeft=totalRounds()-filled;
-  const stillRequired=POSITIONS.reduce((s,p)=>s+need[p],0)+flex;
-  const mustFill=roundsLeft<=stillRequired;      // no bench luxury left
+  const stillRequired=POSITIONS.reduce((a,p)=>a+need[p],0)+flex;
+  const mustFill=roundsLeft<=stillRequired;
   const isFlexEligible=p=>['RB','WR','TE'].includes(p);
-  return avail.filter(p=>{
+
+  /* usefulness of the (k+1)-th body at a position, from effective starting
+     slots — unchanged from before, just factored out so the lookahead can ask
+     about hypothetical rosters */
+  const startSlots={}; POSITIONS.forEach(p=>
+    startSlots[p]=Math.max(0.5,(baseIdx[p]||S.numTeams)/S.numTeams));
+  const usefulness=(pos,count)=>{
+    const ss=startSlots[pos], surplus=(count+1)-ss;
+    return surplus<=0?1:ss/(ss+surplus*2);
+  };
+  const adjVal=(pl,count)=>{
+    const u=usefulness(pl.p,count), surplus=(count+1)-startSlots[pl.p];
+    const stack=surplus>0?surplus*20:0;
+    return (pl.vorp>0?pl.vorp*u:pl.vorp)-stack;
+  };
+
+  const eligible=p=>{
     if(!canDraftWith(cnt,p.p)) return false;
-    // kicker and defense only once they're actually needed and the end is near
     if(p.p==='K'||p.p==='DST') return need[p.p]>0 && roundsLeft<=4;
     if(mustFill && !(need[p.p]>0 || (flex>0 && isFlexEligible(p.p)))) return false;
-    /* Below replacement, VORP is NOT comparable across positions: the TE curve
-       is shallow past TE12 so leftover tight ends read as -30 while leftover
-       receivers read as -80, even though a 3rd TE can never enter the lineup.
-       At single-start positions, cap depth at one backup unless the player is
-       genuinely above replacement — "too good to pass up". */
-    const slots=Math.max(0.5,(baseIdx[p.p]||S.numTeams)/S.numTeams);
+    const slots=startSlots[p.p];
     if(slots<=1.2 && cnt[p.p]>=Math.ceil(slots)+1 && p.vorp<=0) return false;
     return true;
-  }).map(p=>{
-    const c=cw[p.p]?cw[p.p].cost:0;
-    const needBonus=(need[p.p]>0?18:0)+((flex>0&&isFlexEligible(p.p))?8:0);
-    // stop hoarding a position once starters and a sensible backup are covered
-    /* VORP measures value above the last STARTER, so it can't be compared
-       across positions for bench players: this league starts ~2.5 RB but only
-       1 TE, so a 3rd RB is nearly a starter while a 3rd TE never plays.
-       Discount by effective starting slots, taken from the same flex
-       resolution that produced the baselines. */
-    const ss=Math.max(0.5,(baseIdx[p.p]||S.numTeams)/S.numTeams);
-    // what he'd BE on the roster once drafted, not what's already there
-    const surplus=(cnt[p.p]+1)-ss;
-    const useful=surplus<=0?1:ss/(ss+surplus*2);
+  };
+
+  /* Per-position survival-ordered lists, computed once. bestLater(pos, skipId,
+     countAfterMyPick) = E[best available at pos at my next pick], the same
+     first-survivor chain costOfWaiting uses, but valued against the roster I
+     WOULD have after this pick. */
+  const byPos={};
+  POSITIONS.forEach(pos=>{
+    byPos[pos]=avail.filter(x=>x.p===pos).sort((a,b)=>b.vorp-a.vorp).slice(0,25)
+      .map(x=>({x,s:survival(x,ctx)}));
+  });
+  const bestLater=(pos,skipId,count)=>{
+    let e=0,gone=1;
+    for(const {x,s} of byPos[pos]){
+      if(x.id===skipId) continue;
+      e+=adjVal(x,count)*s*gone; gone*=(1-s);
+      if(gone<0.002) break;
+    }
+    return e;
+  };
+
+  /* TWO-PICK PLAN: value of taking p now, plus the expected best pick
+     available at my next turn given p is on my roster. Urgency needs no
+     separate weight — a player who will surely survive simply keeps showing
+     up in every OTHER candidate's second term, which is exactly what
+     "you can wait on him" means in points. */
+  const cand=avail.filter(eligible)
+    .sort((a,b)=>adjVal(b,cnt[b.p])-adjVal(a,cnt[a.p])).slice(0,24);
+  return cand.map(p=>{
+    const now=adjVal(p,cnt[p.p]);
+    let next=-Infinity;
+    for(const pos of POSITIONS){
+      if(pos==='K'||pos==='DST'){        // gated exactly as the pick itself is
+        if(!(need[pos]>0 && roundsLeft-1<=4)) continue;
+      }
+      if(!canDraftWith(cnt,pos) && pos!==p.p) continue;
+      const cAfter=cnt[pos]+(pos===p.p?1:0);
+      if(ROSTER_MAX[pos]&&cAfter>=ROSTER_MAX[pos]) continue;
+      const v=bestLater(pos,p.id,cAfter);
+      if(v>next) next=v;
+    }
+    if(next===-Infinity) next=0;
+    const needBonus=(need[p.p]>0?6:0)+((flex>0&&isFlexEligible(p.p))?3:0);
     const surv=survival(p,ctx);
-    /* Urgency applies only to a slot still to be filled. Once a position is
-       covered, extra bodies are bench depth and there is nothing to be late for. */
-    const urgent=(need[p.p]>0||(flex>0&&isFlexEligible(p.p)))?c*0.85:0;
-    /* Two separate corrections, because one can't do both jobs.
-       The MULTIPLIER discounts value above replacement (a 2nd TE is worth a
-       fraction of his VORP). It does nothing at or below zero, so an ADDITIVE
-       penalty is also needed — otherwise a 3rd TE at 0 VORP outranks a needed
-       WR at −5, which is how this showed up in a live draft. */
-    const v=p.vorp>0?p.vorp*useful:p.vorp;
-    const stackPenalty=surplus>0?surplus*20:0;
-    return {p,score:v+urgent*useful+needBonus-stackPenalty-surv*12,cost:c,surv};
+    return {p,score:now+next+needBonus,cost:cw[p.p]?cw[p.p].cost:0,surv,now,next};
   }).sort((a,b)=>b.score-a.score).slice(0,3)
     .map(x=>({...x,why:whyText(x,cw,avail,nxt)}));
 }
