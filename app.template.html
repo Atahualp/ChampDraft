@@ -144,6 +144,19 @@ header{position:sticky;top:0;z-index:40;background:var(--ink);
 .statline .v{font-family:var(--mono);font-size:16px;font-weight:700}
 
 /* ---- nav ---- */
+#cmpBar{position:fixed;left:12px;right:12px;bottom:calc(64px + env(safe-area-inset-bottom));
+  z-index:48;display:none;align-items:center;justify-content:space-between;gap:8px;
+  background:var(--accent);color:#fff;padding:11px 14px;border-radius:12px;font-size:13px;
+  box-shadow:0 8px 24px rgba(0,0,0,.4)}
+#cmpBar.on{display:flex}
+#cmpBar button{background:transparent;border:0;color:#fff;font-size:16px;padding:2px 6px}
+.cmpgrid{display:grid;grid-template-columns:minmax(70px,1fr) 1fr 1fr;gap:7px 10px;
+  margin:12px 0;font-size:13px;align-items:baseline}
+.cmpgrid .k{color:var(--faint);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.cmpgrid .hd{font-weight:700;font-size:13px;line-height:1.2}
+.cmpgrid .num.win,.cmpgrid .win{color:var(--good);font-weight:700}
+.verdict{background:var(--bg2,rgba(255,255,255,.05));border-radius:12px;padding:12px 14px;
+  margin:10px 0 2px;font-size:14px;line-height:1.45}
 nav{position:fixed;left:0;right:0;bottom:0;z-index:45;display:flex;background:var(--surface);
   border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
 nav button{flex:1;min-height:58px;font-size:10px;font-weight:700;letter-spacing:.08em;
@@ -309,15 +322,20 @@ label.f input,label.f select{width:100%;min-height:var(--tap);background:var(--s
    Player data and its labels live in PLAYERS / META below — swapping sources
    is a data change, never a code change.
    ============================================================ */
-const BUILD='13';   // keep in step with CACHE in sw.js
+const BUILD='14';   // keep in step with CACHE in sw.js
 const PLAYERS = /*__PLAYERS__*/[];
 /* Where the numbers came from. Everything user-visible reads its label from
    here, so swapping data sources is a data change, not a code change. */
 const META = Object.assign({
   stamp:'unknown', proj:'projections', adp:'ADP',
-  rank1:'expert rank', rank2:'consensus', notes:''
+  rank1:'expert rank', rank2:'expert rank', rank3:'consensus', trustedAbbr:'Experts', notes:''
 }, /*__META__*/{});
-const hasR1=PLAYERS.some(p=>p.r1!=null), hasR2=PLAYERS.some(p=>p.r2!=null);
+const hasR1=PLAYERS.some(p=>p.r1!=null), hasR2=PLAYERS.some(p=>p.r2!=null), hasR3=PLAYERS.some(p=>p.r3!=null);
+/* The two trusted experts are DISPLAYED separately but their blend stays the
+   arbitrage signal — disagreement with the market is only meaningful when it
+   is their shared opinion, not one analyst's hot take. */
+PLAYERS.forEach(p=>{p.tr=(p.r1!=null&&p.r2!=null)?(p.r1+p.r2)/2:(p.r1!=null?p.r1:(p.r2!=null?p.r2:null));});
+const hasTrusted=PLAYERS.some(p=>p.tr!=null);
 
 /* ---------- 1. STORAGE LAYER ---------------------------------
    All persistence goes through this object. App logic never
@@ -492,7 +510,7 @@ function computeBaselines(scored,st){
 /* ---------- 3. DRAFT STATE (all derived, nothing duplicated) ---- */
 let S=null;                    // current session
 let scored=[], replPts={}, baseIdx={}, posRankMap={};
-let ui={view:'Board',pos:'ALL',q:'',hide:true,steals:false,sort:'vorp',sheetFor:null,auto:false,league:'grid'};
+let ui={view:'Board',pos:'ALL',q:'',hide:true,steals:false,sort:'vorp',sheetFor:null,auto:false,league:'grid',compareWith:null};
 
 const totalRounds=()=>{const r=S.rosterSlots;return r.QB+r.RB+r.WR+r.TE+r.FLEX+r.K+r.DST+r.BENCH;};
 const totalPicks=()=>totalRounds()*S.numTeams;
@@ -535,7 +553,9 @@ function rescoreAll(){
 
 /* ---------- 4. SURVIVAL + COST OF WAITING (spec §5) ------------ */
 function rawMarketRank(p){
-  return p.a!=null?p.a:(p.r2!=null?p.r2:(p.r1!=null?p.r1:360));
+  /* market proxy order: ADP, then the six-analyst consensus, then the trusted
+     blend. A single expert never stands in for the market. */
+  return p.a!=null?p.a:(p.r3!=null?p.r3:(p.tr!=null?p.tr:360));
 }
 /* Kickers and defenses sit high in raw ADP but nobody takes them until the end.
    Leaving them in the ordering makes every skill player look like a reach and
@@ -570,6 +590,9 @@ function survivalContext(avail,fromPick,toPick){
       w[p]=0;
       if(!canDraftWith(st.cnt,p)) return;
       if(p==='K'||p==='DST'){ if(st.need[p]>0&&left<=4) w[p]=0.9; return; }
+      /* rooms do not hoard tight ends — a team holding one streams the position
+         from waivers, so its residual TE demand is nearly zero */
+      if(p==='TE'&&st.cnt.TE>=1){ w[p]=0.04; return; }
       if(st.need[p]>0) w[p]=1.0;
       else if(st.flex>0&&['RB','WR','TE'].includes(p)) w[p]=0.65;
       else w[p]=0.22;                       // best-available / bench depth
@@ -645,11 +668,12 @@ function canDraftWith(cnt,pos){
 }
 function canDraft(idx,pos){ return canDraftWith(needsOf(idx).cnt,pos); }
 
-function suggestions(){
+/* Everything a two-pick plan needs to be priced, shared by the suggestion
+   engine and the head-to-head compare so they can never disagree. */
+function planEnv(){
   const drafted=draftedIds(), avail=scored.filter(p=>!drafted.has(p.id)&&!S.skip.includes(p.id));
   const pickNo=nextPickNumber(), nxt=myNextPick(pickNo+1)||totalPicks();
   const ctx=survivalContext(avail,pickNo+1,nxt);
-  const cw=costOfWaiting(avail,ctx);          // still shown in whyText
   const {cnt,need,flex,filled}=needsOf(S.myTeamIdx);
   const roundsLeft=totalRounds()-filled;
   const stillRequired=POSITIONS.reduce((a,p)=>a+need[p],0)+flex;
@@ -673,6 +697,7 @@ function suggestions(){
 
   const eligible=p=>{
     if(!canDraftWith(cnt,p.p)) return false;
+    if(p.p==='TE'&&cnt.TE>=1) return false;   // one TE, then stream — never suggest a second
     if(p.p==='K'||p.p==='DST') return need[p.p]>0 && roundsLeft<=4;
     if(mustFill && !(need[p.p]>0 || (flex>0 && isFlexEligible(p.p)))) return false;
     const slots=startSlots[p.p];
@@ -684,6 +709,7 @@ function suggestions(){
      countAfterMyPick) = E[best available at pos at my next pick], the same
      first-survivor chain costOfWaiting uses, but valued against the roster I
      WOULD have after this pick. */
+  /* (candidate selection moved to suggestions(), which shares this env) */
   const byPos={};
   POSITIONS.forEach(pos=>{
     byPos[pos]=avail.filter(x=>x.p===pos).sort((a,b)=>b.vorp-a.vorp).slice(0,25)
@@ -699,39 +725,53 @@ function suggestions(){
     return e;
   };
 
-  /* TWO-PICK PLAN: value of taking p now, plus the expected best pick
-     available at my next turn given p is on my roster. Urgency needs no
-     separate weight — a player who will surely survive simply keeps showing
-     up in every OTHER candidate's second term, which is exactly what
-     "you can wait on him" means in points. */
-  const cand=avail.filter(eligible)
-    .sort((a,b)=>adjVal(b,cnt[b.p])-adjVal(a,cnt[a.p])).slice(0,24);
-  return cand.map(p=>{
-    const now=adjVal(p,cnt[p.p]);
-    let next=-Infinity;
-    for(const pos of POSITIONS){
-      if(pos==='K'||pos==='DST'){        // gated exactly as the pick itself is
-        if(!(need[pos]>0 && roundsLeft-1<=4)) continue;
-      }
-      if(!canDraftWith(cnt,pos) && pos!==p.p) continue;
-      const cAfter=cnt[pos]+(pos===p.p?1:0);
-      if(ROSTER_MAX[pos]&&cAfter>=ROSTER_MAX[pos]) continue;
-      const v=bestLater(pos,p.id,cAfter);
-      if(v>next) next=v;
+  return {avail,pickNo,nxt,ctx,cnt,need,flex,roundsLeft,mustFill,isFlexEligible,adjVal,eligible,bestLater};
+}
+/* TWO-PICK PLAN score for one candidate: what he adds now, plus the expected
+   best pick still on the board at my next turn if I take him. */
+function planScore(p,env){
+  const {cnt,need,flex,roundsLeft,isFlexEligible,adjVal,bestLater,ctx}=env;
+  const now=adjVal(p,cnt[p.p]);
+  let next=-Infinity;
+  for(const pos of POSITIONS){
+    if(pos==='K'||pos==='DST'){          // gated exactly as the pick itself is
+      if(!(need[pos]>0 && roundsLeft-1<=4)) continue;
     }
-    if(next===-Infinity) next=0;
-    const needBonus=(need[p.p]>0?6:0)+((flex>0&&isFlexEligible(p.p))?3:0);
-    const surv=survival(p,ctx);
-    return {p,score:now+next+needBonus,cost:cw[p.p]?cw[p.p].cost:0,surv,now,next};
+    if(!canDraftWith(cnt,pos) && pos!==p.p) continue;
+    const cAfter=cnt[pos]+(pos===p.p?1:0);
+    if(pos==='TE'&&cAfter>=1) continue;        // a second TE is never part of the plan
+    if(ROSTER_MAX[pos]&&cAfter>=ROSTER_MAX[pos]) continue;
+    const v=bestLater(pos,p.id,cAfter);
+    if(v>next) next=v;
+  }
+  if(next===-Infinity) next=0;
+  const needBonus=(need[p.p]>0?6:0)+((flex>0&&isFlexEligible(p.p))?3:0);
+  return {now,next,needBonus,score:now+next+needBonus,surv:survival(p,ctx)};
+}
+function suggestions(){
+  const env=planEnv();
+  const cw=costOfWaiting(env.avail,env.ctx);   // still shown in whyText
+  const cand=env.avail.filter(env.eligible)
+    .sort((a,b)=>env.adjVal(b,env.cnt[b.p])-env.adjVal(a,env.cnt[a.p])).slice(0,24);
+  return cand.map(p=>{
+    const ps=planScore(p,env);
+    return {p,score:ps.score,cost:cw[p.p]?cw[p.p].cost:0,surv:ps.surv,now:ps.now,next:ps.next};
   }).sort((a,b)=>b.score-a.score).slice(0,3)
-    .map(x=>({...x,why:whyText(x,cw,avail,nxt)}));
+    .map(x=>({...x,why:whyText(x,cw,env.avail,env.nxt)}));
+}
+/* head-to-head: both candidates priced with the identical machinery */
+function comparePlayers(idA,idB){
+  const a=byId(idA), b=byId(idB); if(!a||!b) return null;
+  const env=planEnv();
+  return {a,b,pa:planScore(a,env),pb:planScore(b,env),env};
 }
 function suggestionsSafe(){
   const s=suggestions();
   if(s.length) return s;
   // never show an empty panel — fall back to best available we can legally draft
   const drafted=draftedIds();
-  return scored.filter(p=>!drafted.has(p.id)&&canDraft(S.myTeamIdx,p.p))
+  const cnt0=needsOf(S.myTeamIdx).cnt;
+  return scored.filter(p=>!drafted.has(p.id)&&canDraftWith(cnt0,p.p)&&!(p.p==='TE'&&cnt0.TE>=1))
     .slice(0,3).map(p=>({p,cost:0,surv:1,why:'best available'}));
 }
 /* rank among what's actually left at that position — a preseason rank is
@@ -742,8 +782,10 @@ function availRank(pl,avail){
 function whyText(x,cw,avail,nxt){
   const p=x.p, bits=[];
   bits.push(`best ${p.p} left`.replace('best',availRank(p,avail)===1?'best':`#${availRank(p,avail)}`));
-  if(p.a!=null){ const d=Math.round(nextPickNumber()-p.a);
-    if(d>=8) bits.push(`${d} past ADP`); }
+  { const d=Math.round(nextPickNumber()-p.ovr);
+    if(d>=8) bits.push(`${d} past our board`);
+    else if(p.a!=null){ const m=Math.round(nextPickNumber()-p.a);
+      if(m>=8) bits.push(`${m} past ADP`); } }
   bits.push(`${Math.round(x.surv*100)}% to survive to ${nxt}`);
   if(x.cost>6) bits.push(`waiting costs ${Math.round(x.cost)}`);
   const cl=cliff(avail,p.p);
@@ -753,6 +795,12 @@ function whyText(x,cw,avail,nxt){
 
 /* ---------- 5. AUTO-PICK BOTS (mixed styles) ------------------- */
 const STYLES=['chalk','chalk','needs','needs','sharp','gambler'];
+/* stable per-session per-team dice roll, so a saved draft replays the same */
+function botQuirk(idx){let h=2166136261;const s=String(S&&S.sessionId||'');
+  for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}
+  h=(h^Math.imul(idx+1,2654435761))>>>0;
+  h=Math.imul(h^(h>>>15),2246822519)>>>0;h^=h>>>13;
+  h=Math.imul(h,3266489917)>>>0;h^=h>>>16;return (h>>>0)%100;}
 function botPick(idx){
   const drafted=draftedIds();
   const avail=scored.filter(p=>!drafted.has(p.id));
@@ -763,9 +811,18 @@ function botPick(idx){
   const mustFill=roundsLeft<=stillRequired;
   const isFlexEligible=p=>['RB','WR','TE'].includes(p);
   const noise={chalk:3,needs:6,sharp:8,gambler:16}[style];
+  /* Real rooms carry ONE tight end and stream the position off waivers.
+     Roughly one team a draft grabs a second, late; nobody takes a third.
+     Same restraint, softer, for a third quarterback. */
+  const twoTE=botQuirk(idx)<5;
   let best=null,bs=-1e9;
   for(const p of avail){
     if(!canDraftWith(cnt,p.p)) continue;
+    if(p.p==='TE'&&cnt.TE>=1){
+      if(cnt.TE>=2) continue;                    // never a third
+      if(!twoTE||roundsLeft>5) continue;         // rare team, endgame only
+    }
+    if(p.p==='QB'&&cnt.QB>=2&&roundsLeft>3) continue;
     if(p.p==='K'||p.p==='DST'){ if(need[p.p]<=0||roundsLeft>4) continue; }
     else if(mustFill && !(need[p.p]>0 || (flex>0 && isFlexEligible(p.p)))) continue;
     const mr=marketRank(p);
@@ -832,9 +889,11 @@ function visiblePlayers(){
   if(ui.pos!=='ALL') list=list.filter(p=>p.p===ui.pos);
   if(ui.q){const q=ui.q.toLowerCase();list=list.filter(p=>p.n.toLowerCase().includes(q));}
   if(ui.hide) list=list.filter(p=>!drafted.has(p.id));
-  if(ui.steals) list=list.filter(p=>p.a!=null&&(nextPickNumber()-p.a)>=12&&!drafted.has(p.id));
+  if(ui.steals){const n=nextPickNumber(), myTE=needsOf(S.myTeamIdx).cnt.TE;
+    list=list.filter(p=>!drafted.has(p.id)&&p.vorp>0&&p.p!=='K'&&p.p!=='DST'
+      &&!(p.p==='TE'&&myTE>=1)&&(n-p.ovr)>=12);}
   if(ui.sort==='adp') list.sort((a,b)=>marketRank(a)-marketRank(b));
-  else if(ui.sort==='trusted') list.sort((a,b)=>(a.r1!=null?a.r1:999)-(b.r1!=null?b.r1:999));
+  else if(ui.sort==='trusted') list.sort((a,b)=>(a.tr!=null?a.tr:999)-(b.tr!=null?b.tr:999));
   else list.sort((a,b)=>b.vorp-a.vorp);
   return list.slice(0,260);
 }
@@ -863,6 +922,7 @@ function renderWatch(){
 }
 function renderBoard(){
   const drafted=draftedIds(), list=visiblePlayers(), n=nextPickNumber();
+  const myTE=needsOf(S.myTeamIdx).cnt.TE;
   const {hc,stk}=rosterFlags();
   const maxV=Math.max(...list.map(p=>p.vorp),1);
   const el=$('#board');
@@ -870,7 +930,8 @@ function renderBoard(){
   el.innerHTML=list.map(p=>{
     const gone=drafted.has(p.id);
     const diff=p.a!=null?Math.round(n-p.a):null;
-    const steal=diff!=null&&diff>=12&&!gone;
+    const bd=Math.round(n-p.ovr);              // fall vs OUR board, not the market
+    const steal=!gone&&p.vorp>0&&bd>=12&&p.p!=='K'&&p.p!=='DST'&&!(p.p==='TE'&&myTE>=1);
     const est=p.pts.bonusShare>0.18||p.p==='K'||p.p==='DST';
     const g=Math.max(0,Math.min(1,p.vorp/maxV));
     return `<button class="row ${gone?'gone':''}" data-id="${p.id}">
@@ -879,8 +940,8 @@ function renderBoard(){
       <span class="body">
         <span class="nm">${isWatched(p.id)?'<span class="starred">★</span> ':''}${esc(p.n)}${steal?' <span class="steal">◆</span>':''}${!gone&&hc.has(p.id)?' <span class="tagf tag-hc">HC</span>':''}${!gone&&stk.has(p.id)?' <span class="tagf tag-st">STACK</span>':''}</span>
         <span class="meta">${esc(p.t)}${p.b?' · bye '+p.b:''}
-          ${p.r1!=null?` · ${esc(META.rank1abbr||'rank')} ${p.r1}`:''}
-          ${diff!=null?`· <span class="${diff>=12?'steal':diff>0?'up':'down'}">ADP ${diff>0?'+':''}${diff}</span>`:''}
+          ${p.r1!=null?` · ${esc(META.rank1abbr||'R1')}${p.r1}`:''}${p.r2!=null?` ${esc(META.rank2abbr||'R2')}${p.r2}`:''}${p.r3!=null?` ${esc(META.rank3abbr||'C')}${p.r3}`:''}
+          ${steal?`· <span class="steal">+${bd} vs board</span>`:diff!=null?`· <span class="${diff>0?'up':'down'}">ADP ${diff>0?'+':''}${diff}</span>`:''}
           ${est?'<span class="est">est</span>':''}</span>
         <span class="gauge"><i style="width:${(g*100).toFixed(0)}%"></i></span>
       </span>
@@ -917,6 +978,12 @@ function renderSugg(){
 
 /* ---------- 7. PICK SHEET ------------------------------------- */
 function openSheet(id){
+  /* compare mode: the second tap routes here from every entry point —
+     board, watchlist, suggestions, grid — so intercept once. */
+  if(ui.compareWith){
+    if(ui.compareWith!==id){ const w=ui.compareWith; ui.compareWith=null; hideCmpBar(); openCompareSheet(w,id); return; }
+    ui.compareWith=null; hideCmpBar();   // tapped the same player: cancel into his card
+  }
   const p=byId(id); if(!p) return;
   ui.sheetFor=id;
   const drafted=draftedIds(), isGone=drafted.has(id);
@@ -928,7 +995,7 @@ function openSheet(id){
   let h=`<div class="grab"></div>
     <h3>${esc(p.n)} <span class="pill">${p.p}${posRankMap[p.id]||''}</span></h3>
     <div class="sub2">${esc(p.t)||'FA'}${p.b?` · bye ${p.b}`:''}
-      ${p.r2!=null?` · ${esc(META.rank2)} ${p.r2}`:''}${p.r1!=null?` · ${esc(META.rank1)} ${p.r1}`:''}</div>
+      ${p.r1!=null?` · ${esc(META.rank1)} ${p.r1}`:''}${p.r2!=null?` · ${esc(META.rank2)} ${p.r2}`:''}${p.r3!=null?` · ${esc(META.rank3)} ${p.r3}`:''}</div>
     <div class="statline">
       <div><div class="k">VORP</div><div class="v ${p.vorp>=0?'up':'down'}">${p.vorp>0?'+':''}${p.vorp.toFixed(0)}</div></div>
       <div><div class="k">Points</div><div class="v">${p.pts.total.toFixed(0)}</div></div>
@@ -941,6 +1008,19 @@ function openSheet(id){
   if(bl&&bl.n>=2) h+=`<div class="hint">You already have ${bl.n} starters off in week ${p.b}.</div>`;
   if(p.pts.bonusShare>0.05) h+=`<div class="hint">${Math.round(p.pts.bonusShare*100)}% of this total is modeled from per-game distributions, not exact.</div>`;
   if(p.p==='K'||p.p==='DST') h+=`<div class="hint">Scoring incomplete: no FG distance splits / per-game defensive brackets. Rank by published rank instead.</div>`;
+  const bdS=Math.round(n-p.ovr);
+  if(!isGone&&p.vorp>0&&bdS>=12&&p.p!=='K'&&p.p!=='DST'&&!(p.p==='TE'&&needsOf(S.myTeamIdx).cnt.TE>=1)){
+    let st=`<div class="hint"><span class="steal">◆ Steal</span> — this league's scoring values him at pick ${p.ovr}; the room has passed him ${bdS} times since.`;
+    /* the trusted pair corroborates or cautions, but never triggers: the flag
+       is league math; Winks+Norris tell you whether the projections have news */
+    const mkt=p.a!=null?p.a:p.r3;
+    if(p.tr!=null&&mkt!=null){
+      const edge=Math.round(mkt-p.tr);
+      if(edge>=12) st+=` Winks and Norris agree — they rank him ${Math.round(p.tr)} against a market ${Math.round(mkt)}.`;
+      else if(edge<=-12) st+=` One caution: Winks and Norris rank him just ${Math.round(p.tr)} — the projections may be missing news they have.`;
+    }
+    h+=st+`</div>`;
+  }
   if(surv!=null&&!isGone) h+=`<div class="hint">About ${surv}% likely to survive to your next pick (${nxt}).</div>`;
   if(isGone){
     const after=pick?S.picks.length-S.picks.findIndex(x=>x.playerId===id)-1:0;
@@ -953,7 +1033,8 @@ function openSheet(id){
         <div class="eyebrow" style="margin:12px 0 6px">Drafted by</div><div class="teamgrid">`;
     for(let i=0;i<S.numTeams;i++) if(i!==S.myTeamIdx)
       h+=`<button data-a="team" data-i="${i}">${esc(teamName(i))}</button>`;
-    h+=`</div><button class="act" data-a="skip">${S.skip.includes(id)?'Remove from':'Add to'} don't-suggest list</button>`;
+    h+=`</div><button class="act" data-a="cmp">⚖ Compare with another player</button>
+        <button class="act" data-a="skip">${S.skip.includes(id)?'Remove from':'Add to'} don't-suggest list</button>`;
   }
   $('#sheet').innerHTML=h;
   $('#sheet').querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>{
@@ -962,12 +1043,78 @@ function openSheet(id){
     else if(a==='team') doPick(id,+b.dataset.i);
     else if(a==='undo') undoPlayer(id);
     else if(a==='watch'){ toggleWatch(id); closeSheet(); render(); }
+    else if(a==='cmp'){ ui.compareWith=id; closeSheet(); showCmpBar(); }
     else if(a==='skip'){ const i=S.skip.indexOf(id);
       i>=0?S.skip.splice(i,1):S.skip.push(id); save(); closeSheet(); render(); }
   });
   $('#sheet').classList.add('on'); $('#scrim').classList.add('on');
 }
 const closeSheet=()=>{$('#sheet').classList.remove('on');$('#scrim').classList.remove('on');ui.sheetFor=null;};
+function showCmpBar(){
+  let el=$('#cmpBar');
+  if(!el){ el=document.createElement('div'); el.id='cmpBar'; document.body.appendChild(el); }
+  const p=byId(ui.compareWith);
+  el.innerHTML=`<span>Comparing <strong>${esc(p?p.n:'')}</strong> — tap another player</span><button id="cmpX" aria-label="Cancel compare">✕</button>`;
+  el.classList.add('on');
+  $('#cmpX').onclick=()=>{ui.compareWith=null;hideCmpBar();};
+}
+function hideCmpBar(){ const el=$('#cmpBar'); if(el) el.classList.remove('on'); }
+
+/* ---------- 7b. HEAD-TO-HEAD SHEET ----------------------------- */
+function openCompareSheet(idA,idB){
+  const c=comparePlayers(idA,idB); if(!c) return;
+  const {a,b,pa,pb,env}=c;
+  const drafted=draftedIds(), goneA=drafted.has(a.id), goneB=drafted.has(b.id);
+  const d=Math.round(pa.score-pb.score);
+  const fmt=v=>v==null?'—':v;
+  /* one row of the grid, better value highlighted; lowBetter for ranks */
+  const row=(k,va,vb,lowBetter,fmtFn)=>{
+    fmtFn=fmtFn||(x=>x==null?'—':x);
+    let wa='',wb='';
+    if(va!=null&&vb!=null&&va!==vb){
+      const aWins=lowBetter?va<vb:va>vb;
+      wa=aWins?' win':''; wb=aWins?'':' win';
+    }
+    return `<div class="k">${k}</div><div class="num${wa}">${fmtFn(va)}</div><div class="num${wb}">${fmtFn(vb)}</div>`;
+  };
+  let verdict;
+  if(goneA||goneB){
+    verdict=`${esc((goneA?a:b).n)} is already drafted — no plan to weigh.`;
+  }else if(Math.abs(d)<4){
+    verdict=`<strong>Coin flip.</strong> The two plans land within ${Math.max(1,Math.abs(d))} points of each other through your next pick. Take the one you believe in.`;
+  }else{
+    const w=d>0?a:b, l=d>0?b:a, lp=d>0?pb:pa;
+    verdict=`Take <strong>${esc(w.n)}</strong> first — that plan projects <strong>+${Math.abs(d)} points</strong> through your next pick`;
+    if(!drafted.has(l.id)&&lp.surv>=0.55) verdict+=`, and ${esc(l.n)} is ${Math.round(lp.surv*100)}% to still be there`;
+    verdict+='.';
+  }
+  let h=`<div class="grab"></div>
+    <h3>Head to head</h3>
+    <div class="verdict">${verdict}</div>
+    <div class="cmpgrid">
+      <div></div>
+      <div class="hd">${esc(a.n)}<br><span class="sub">${a.p}${posRankMap[a.id]||''} · ${esc(a.t)||'FA'}</span></div>
+      <div class="hd">${esc(b.n)}<br><span class="sub">${b.p}${posRankMap[b.id]||''} · ${esc(b.t)||'FA'}</span></div>
+      ${row('Plan',Math.round(pa.score),Math.round(pb.score),false)}
+      ${row('VORP',Math.round(a.vorp),Math.round(b.vorp),false)}
+      ${row('Points',Math.round(a.pts.total),Math.round(b.pts.total),false)}
+      ${row('Our board',a.ovr,b.ovr,true)}
+      ${row(esc(META.rank1),a.r1,b.r1,true)}
+      ${row(esc(META.rank2),a.r2,b.r2,true)}
+      ${row(esc(META.rank3),a.r3,b.r3,true)}
+      ${row('ADP',a.a!=null?Math.round(a.a):null,b.a!=null?Math.round(b.a):null,true)}
+      ${row('Survives',goneA?null:Math.round(pa.surv*100),goneB?null:Math.round(pb.surv*100),false,v=>v==null?'—':v+'%')}
+      ${row('Bye',a.b||null,b.b||null,false,v=>v==null?'—':v)}
+    </div>
+    <div class="hint">Plan = points he adds now, plus the expected best pick still available at your next turn if you take him — the same math behind the suggestions.</div>`;
+  if((a.p==='TE'||b.p==='TE')&&env.cnt.TE>=1)
+    h+=`<div class="hint">You already carry a tight end — the engine would not spend this pick on another. Stream the position instead.</div>`;
+  h+=`<button class="act" data-c="${a.id}">Open ${esc(a.n)}</button>
+      <button class="act" data-c="${b.id}">Open ${esc(b.n)}</button>`;
+  $('#sheet').innerHTML=h;
+  $('#sheet').querySelectorAll('[data-c]').forEach(bt=>bt.onclick=()=>openSheet(bt.dataset.c));
+  $('#sheet').classList.add('on'); $('#scrim').classList.add('on');
+}
 
 async function doPick(playerId,teamIdx,manualName){
   const n=nextPickNumber();
@@ -1073,11 +1220,15 @@ function positionalEdge(idx,rows){
   });
   return grp;
 }
-/* draft-day value: taken later than the market expected = value */
+/* draft-day value, judged against OUR league-scored board. Beating the room's
+   ADP proves nothing by itself — the market prices half-PPR, this league does
+   not. A steal is a player taken after where these rules say he should go.
+   The ADP gap rides along as context only. */
 function pickValue(idx){
   return rosterOf(idx).map(p=>{
-    const pl=byId(p.playerId); if(!pl||pl.a==null) return null;
-    return {pl,pick:p.pickNumber,delta:Math.round(p.pickNumber-pl.a)};
+    const pl=byId(p.playerId); if(!pl||pl.p==='K'||pl.p==='DST') return null;
+    return {pl,pick:p.pickNumber,delta:Math.round(p.pickNumber-pl.ovr),
+            adp:pl.a!=null?Math.round(p.pickNumber-pl.a):null};
   }).filter(Boolean).sort((a,b)=>b.delta-a.delta);
 }
 /* if a starter goes down, how far does the roster fall at that position? */
@@ -1203,14 +1354,14 @@ function renderRecap(){
   h+=`<div class="hint">Points above or below what the other ${S.numTeams-1} teams average at that position.</div></div>`;
 
   if(vals.length){
-    const steals=vals.filter(v=>v.delta>=10).slice(0,3);
+    const steals=vals.filter(v=>v.delta>=10&&v.pl.vorp>0).slice(0,3);
     const reaches=vals.filter(v=>v.delta<=-10).slice(-2).reverse();
     h+=`<div class="card"><h3>Draft-day value</h3>`;
     if(steals.length){ steals.forEach(v=>h+=`<div class="slot"><span>${esc(v.pl.n)}
-      <span class="sub">pick ${v.pick}</span></span><span class="num steal">${v.delta} past ADP</span></div>`); }
-    else h+=`<div class="sub2">No picks landed more than 10 spots past their ADP.</div>`;
+      <span class="sub">pick ${v.pick}</span></span><span class="num steal">${v.delta} past our board${v.adp!=null&&v.adp>=8?` · ${v.adp} past ADP`:''}</span></div>`); }
+    else h+=`<div class="sub2">No picks landed more than 10 spots past where this league's scoring values them.</div>`;
     if(reaches.length){ reaches.forEach(v=>h+=`<div class="slot"><span>${esc(v.pl.n)}
-      <span class="sub">pick ${v.pick}</span></span><span class="num down">${Math.abs(v.delta)} early</span></div>`); }
+      <span class="sub">pick ${v.pick}</span></span><span class="num down">${Math.abs(v.delta)} early by our board</span></div>`); }
     h+=`</div>`;
   }
 
@@ -1487,10 +1638,12 @@ async function renderSetup(){
   // and one unclosed backtick silently swallows the rest of the string
   const srcBits=[`<strong>${esc(META.proj)}</strong> for projections`];
   if(META.adp) srcBits.push(`<strong>${esc(META.adp)}</strong> for ADP`);
-  if(hasR1){
-    const ranks=hasR2?`<strong>${esc(META.rank1)}</strong> and <strong>${esc(META.rank2)}</strong>`
-                     :`<strong>${esc(META.rank1)}</strong>`;
-    srcBits.push(ranks+' for ranks');
+  if(hasR1||hasR2||hasR3){
+    const rl=[];
+    if(hasR1) rl.push(`<strong>${esc(META.rank1)}</strong>`);
+    if(hasR2) rl.push(`<strong>${esc(META.rank2)}</strong>`);
+    if(hasR3) rl.push(`<strong>${esc(META.rank3)}</strong>`);
+    srcBits.push(rl.join(', ')+' for ranks');
   }
   h+=`<div class="card"><h3>Version</h3><div class="hint">Gridiron Marauder, build ${BUILD}. ${esc(META.stamp)}.</div></div>`;
   h+=`<div class="card"><h3>About the numbers</h3>
@@ -1574,8 +1727,8 @@ $('#q').oninput=e=>{ui.q=e.target.value;renderBoard();};
 $('#tgHide').onclick=e=>{ui.hide=!ui.hide;e.target.setAttribute('aria-pressed',ui.hide);renderBoard();};
 $('#tgSteal').onclick=e=>{ui.steals=!ui.steals;e.target.setAttribute('aria-pressed',ui.steals);renderBoard();};
 $('#tgSort').onclick=e=>{
-  ui.sort=ui.sort==='vorp'?'adp':(ui.sort==='adp'&&hasR1)?'trusted':'vorp';
-  e.target.textContent='Sort: '+({vorp:'VORP',adp:'ADP',trusted:META.rank1abbr||'Rank'})[ui.sort];
+  ui.sort=ui.sort==='vorp'?'adp':(ui.sort==='adp'&&hasTrusted)?'trusted':'vorp';
+  e.target.textContent='Sort: '+({vorp:'VORP',adp:'ADP',trusted:META.trustedAbbr||'Experts'})[ui.sort];
   renderBoard();};
 $('#undoBtn').onclick=undoLast;
 $('#simBtn').onclick=toggleSim;
