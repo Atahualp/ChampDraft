@@ -1580,7 +1580,9 @@ function renderTeams(){
     r.forEach(p=>{const pl=byId(p.playerId);
       h+=`<div class="slot"><span><span class="idx num" style="margin-right:8px">${p.pickNumber}</span>${esc(pl?pl.n:p.manualName||'?')}</span>
         <span class="sub num">${pl?pl.p:''}</span></div>`;});
-    if(nd) h+=`<div style="margin-top:8px">${POSITIONS.filter(p=>need[p]>0).map(p=>`<span class="need">${p} ×${need[p]}</span>`).join('')}</div>`;
+    /* FIX: this referenced a variable `nd` that never existed, so tapping
+       Rosters threw before the view was written and the button looked dead. */
+    if(POSITIONS.some(p=>need[p]>0)) h+=`<div style="margin-top:8px">${POSITIONS.filter(p=>need[p]>0).map(p=>`<span class="need">${p} ×${need[p]}</span>`).join('')}</div>`;
     h+=`</div>`;
   }
   v.innerHTML=h;
