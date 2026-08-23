@@ -116,6 +116,77 @@ Known data gap: Keenan Allen (now IND) has no projection row — the FantasyPros
 exports predate his move, and the ADP file still lists him on LAC. Re-export
 FantasyPros WR projections and ADP before draft night and rebuild.
 
+## Build 18 — official league scoring
+
+The league's real rules replaced the assumptions the engine was built on.
+
+**Corrections to what was already there.** The 100- and 200-yard game bonuses
+were coded as 3 and 5; they are 2 and 4. A lost fumble is -2 and was scored as
+0 — fumble projections are now carried for 315 players. A forced fumble is worth
+nothing to a defence here and was being paid 1 point.
+
+**Newly modelled.** Long-touchdown bonuses (40+ and 50+ yards, both paid on a
+50-yarder), field goals by distance with the miss penalties the make rate
+implies, and lost PATs. The projections give counts and not distances, so these
+use league rates for how often scores travel that far — modelled, and they move
+everyone in the same direction.
+
+**Defences, finally scored properly.** Points- and yards-allowed brackets are
+the largest component of a defence's season and were missing entirely, which
+compressed all 32 into near-uniformity. A season total cannot be scored against
+them directly — a defence allowing 275 points does not allow 16 every week — so
+the per-game distribution is modelled and the bracket table integrated over it.
+Defences now swing 137 points top to bottom instead of 46, and the best one
+carries more VORP than a mid-round receiver.
+
+**That changed when to draft one.** With defences actually worth something,
+waiting until the last four rounds costs real points. The K/DST window now opens
+seven rounds out: +10.5 points a draft across 300 paired simulations, t = 7.6,
+better in 198 of 300. It stays a window rather than a free-for-all so a kicker
+can never crowd out a starter mid-draft. The opponent model was deliberately
+left at four rounds, since real rooms do wait — if your leaguemates start taking
+defences earlier than round 13, this edge shrinks.
+
+**Every rule is now editable in Setup**, including the distance and bracket
+values, so a mid-season rule change does not need a rebuild.
+
+## Build 18 (cache v18)
+
+**Reaches were measuring the wrong thing entirely.** The recap compared your
+pick number to a player's rank on the full static board. By pick 135 everyone
+ranked inside the top 135 is gone, so that comparison is arithmetically
+guaranteed to come back hugely negative no matter who you take — it was
+measuring how deep into the draft you were and calling it your fault. A real
+draft showed picks at 135 and 178 labelled "107 early" and "72 early" when the
+median board rank of what the rest of the room took at the same point was 232.
+
+A reach now means what the words mean: better players were sitting there and
+you passed them. The count is taken at the moment of the pick, and three tests
+must all pass — a crowd of better men left (12+), one of them better by more
+than the tie band, and that man actually worth something to your roster. The
+last test matters: without it the final round flagged as a reach because a
+spare quarterback graded above a sixth running back, which is true and worth
+nothing. Validated both directions — a deliberately awful round-3 pick is
+caught (112 better available), and a full engine-driven draft flags nothing.
+
+**The recap now grades with the engine's own valuation.** `valueFor` was
+hoisted out of `planEnv` to module scope, so the suggestion engine and the
+draft-day grade call the identical function. Previously the grade fell back to
+raw VORP, which counted players the board would never have taken — a fifth
+receiver, a third quarterback — and manufactured reaches out of sensible picks.
+They cannot disagree now by construction.
+
+**Fragility assumed you would field an empty slot.** Losing a starter with no
+backup was scored as his entire projection, so a 143-point tight end read as
+-143. You would stream the position instead. The drop is now measured against
+the best replacement you could actually field — your bench, or the waiver level
+when that is better — and the row says "would stream" when it applies. Same TE
+now reads -55.
+
+**Steals are unchanged and stay valid.** Board fall is self-limiting: to fall
+10 picks past your board rank you have to BE a top-N player still sitting
+there, which cannot happen once the board is picked over.
+
 ## Build 17 (cache v17)
 
 **Ties made explicit.** Scoring 4for4's and FantasyPros' projections through the

@@ -340,7 +340,7 @@ label.f input,label.f select{width:100%;min-height:var(--tap);background:var(--s
    Player data and its labels live in PLAYERS / META below — swapping sources
    is a data change, never a code change.
    ============================================================ */
-const BUILD='17';   // keep in step with CACHE in sw.js
+const BUILD='18';   // keep in step with CACHE in sw.js
 /* Stamped fresh on every build. BUILD is the human version; BUILD_ID changes
    whenever ANY byte of the data changes, which is what the updater compares —
    an installed home-screen app has no address bar to refresh from. */
@@ -426,15 +426,46 @@ const storage = (() => {
 const num=(v,d)=>{const n=parseFloat(v); return Number.isFinite(n)?n:d;};
 const int=(v,d,lo,hi)=>{const n=parseInt(v,10);
   return Number.isFinite(n)?Math.max(lo,Math.min(hi,n)):d;};
+/* Transcribed from the league's official scoring page. Values that were guessed
+   before and are now corrected: the 100/200-yard game bonuses were 3/5, they are
+   really 2/4; a lost fumble is -2, it was scored as 0; forced fumbles are worth
+   nothing to a defence here, they were scored as 1. */
 const DEFAULT_SCORING={
   passYds:0.04,passTD:6,passTD40:2,passTD50:3,passInt:-2,passGame300:2,passGame400:3,
-  rushYds:0.1,rushTD:6,rushGame100:3,rushGame200:5,
-  recYds:0.1,recPer5:2.5,recTD:6,recGame100:3,recGame200:5,
-  fgValue:3.6,pat:1,
-  sack:1,dstInt:2,fumbleRec:2,fumbleForced:1,safety:2,defTD:6,
-  fumbleLost:0, games:17,
+  rushYds:0.1,rushTD:6,rushTD40:2,rushTD50:3,rushGame100:2,rushGame200:4,
+  recYds:0.1,recPer5:2.5,recTD:6,recTD40:2,recTD50:3,recGame100:2,recGame200:4,
+  fg0:3,fg40:4,fg50:5,fg60:6,fgMiss:-2,pat:1,patMiss:-1,
+  sack:1,dstInt:2,fumbleRec:2,fumbleForced:0,safety:2,defTD:6,
+  paBrackets:1, yaBrackets:1,
+  fumbleLost:-2, games:17,
   cvRec:0.70,cvRush:0.55,cvPass:0.28
 };
+/* Share of touchdowns long enough to earn the distance bonuses. The projections
+   give TD counts, not TD lengths, so these are league rates applied uniformly —
+   modeled, not exact, and they move everyone in the same direction. Both bonuses
+   pay on a 50+ yard score, which is how the host stacks them. */
+const TD_LONG={pass:{p40:0.115,p50:0.065},rush:{p40:0.055,p50:0.032},rec:{p40:0.115,p50:0.062}};
+/* Field goals likewise: makes by distance, and the miss rate that turns FGA into
+   the -2 penalties. */
+const FG_MIX={d0:0.55,d40:0.28,d50:0.15,d60:0.02}, FG_MISS_RATE=0.19, PAT_MISS_RATE=0.042;
+/* Points- and yards-allowed brackets, per GAME. A season total cannot be scored
+   directly — a defence allowing 278 points does not allow 16.4 every week, it
+   allows 3 one week and 34 the next, and the brackets are steeply non-linear. So
+   model the per-game distribution and integrate the bracket table over it. */
+const PA_TABLE=[[0,0,10],[1,6,8],[7,13,6],[14,17,4],[18,21,2],[22,27,0],[28,34,-3],[35,45,-5],[46,1e9,-10]];
+const YA_TABLE=[[0,99,10],[100,199,5],[200,299,3],[300,399,0],[400,449,-3],[450,499,-3],[500,549,-5],[550,1e9,-5]];
+const CV_PA=0.55, CV_YA=0.25;
+function bracketPoints(seasonTotal,G,table,cv){
+  if(!(seasonTotal>0)) return 0;
+  const m=seasonTotal/G, a=1/(cv*cv);
+  const cdf=x=>x<=0?0:gammaP(a,x*a/m);
+  let e=0;
+  for(const [lo,hi,pts] of table){
+    if(!pts) continue;
+    e+=(cdf(hi+0.5)-(lo>0?cdf(lo-0.5):0))*pts;
+  }
+  return e*G;
+}
 const DEFAULT_ROSTER={QB:1,RB:2,WR:2,TE:1,FLEX:1,DST:1,K:1,BENCH:7};
 const ROSTER_MAX={QB:4,DST:3,K:3};
 const POSITIONS=['QB','RB','WR','TE','K','DST'];
@@ -489,23 +520,43 @@ function computeProjectedPoints(pl,sc){
   const s=pl.s||{}, G=sc.games>0?sc.games:17;
   let linear=0, bonus=0;
   if(pl.p==='K'){
-    linear=(s.fg||0)*sc.fgValue+(s.xpt||0)*sc.pat;
-    return {linear,bonus:0,total:linear,bonusShare:0};
+    const fg=s.fg||0;
+    /* Distance brackets, weighted by where kicks actually come from, minus the
+       misses those makes imply. Flat 3.6 a kick priced a 55-yarder the same as
+       a chip shot and ignored the -2 for missing. */
+    const perFG=FG_MIX.d0*sc.fg0+FG_MIX.d40*sc.fg40+FG_MIX.d50*sc.fg50+FG_MIX.d60*sc.fg60;
+    linear=fg*perFG+(s.xpt||0)*sc.pat;
+    bonus=fg*FG_MISS_RATE*sc.fgMiss+(s.xpt||0)*PAT_MISS_RATE*sc.patMiss;
+    const t=linear+bonus;
+    return {linear,bonus,total:t,bonusShare:t>0?Math.abs(bonus)/t:0};
   }
   if(pl.p==='DST'){
     linear=(s.sack||0)*sc.sack+(s.dint||0)*sc.dstInt+(s.fr||0)*sc.fumbleRec
           +(s.ff||0)*sc.fumbleForced+(s.dtd||0)*sc.defTD+(s.safety||0)*sc.safety;
-    return {linear,bonus:0,total:linear,bonusShare:0};
+    /* The brackets are usually the single largest component of a defence's
+       season and were missing entirely — every defence was scored on sacks and
+       turnovers alone, which compressed them into near-uniformity. */
+    if(sc.paBrackets) bonus+=bracketPoints(s.pa,G,PA_TABLE,CV_PA);
+    if(sc.yaBrackets) bonus+=bracketPoints(s.ydsAgn,G,YA_TABLE,CV_YA);
+    const t=linear+bonus;
+    return {linear,bonus,total:t,bonusShare:t>0?Math.abs(bonus)/t:0};
   }
   linear=(s.passYds||0)*sc.passYds+(s.passTD||0)*sc.passTD+(s.passInt||0)*sc.passInt
         +(s.rushYds||0)*sc.rushYds+(s.rushTD||0)*sc.rushTD
-        +(s.recYds||0)*sc.recYds+(s.recTD||0)*sc.recTD;
+        +(s.recYds||0)*sc.recYds+(s.recTD||0)*sc.recTD
+        +(s.fumLost||0)*sc.fumbleLost;
+  // long-touchdown bonuses, from league rates on TD length
+  const tdBonus=(n,r,b40,b50)=>(n||0)*(r.p40*b40+r.p50*b50);
+  bonus+=tdBonus(s.passTD,TD_LONG.pass,sc.passTD40,sc.passTD50)
+       + tdBonus(s.rushTD,TD_LONG.rush,sc.rushTD40,sc.rushTD50)
+       + tdBonus(s.recTD ,TD_LONG.rec ,sc.recTD40 ,sc.recTD50 );
   // per-game reception buckets: floor(rec/5) each game — NOT a flat per-catch rate
   if(s.rec&&sc.recPer5){ const m=s.rec/G; let b=0;
     for(let i=1;i<=6;i++) b+=poissonSF(5*i,m);
     bonus+=b*sc.recPer5*G; }
   if(s.recYds){ bonus+=gamesOver(s.recYds,100,sc.cvRec,G)*sc.recGame100
                      +gamesOver(s.recYds,200,sc.cvRec,G)*(sc.recGame200-sc.recGame100); }
+  // (100- and 200-yard game values are 2 and 4 here, not the 3/5 assumed before)
   if(s.rushYds){ bonus+=gamesOver(s.rushYds,100,sc.cvRush,G)*sc.rushGame100
                       +gamesOver(s.rushYds,200,sc.cvRush,G)*(sc.rushGame200-sc.rushGame100); }
   if(s.passYds){ bonus+=gamesOver(s.passYds,300,sc.cvPass,G)*sc.passGame300
@@ -600,6 +651,21 @@ function rescoreAll(){
    says so instead of pretending #1 beats #4. Nothing about the ordering or the
    suggestions changes — only the honesty of the display. */
 const TIE_BAND=17;
+/* The valuation, hoisted to module scope. It used to live inside planEnv, so
+   the recap had no way to ask "what did the engine think of this player at
+   that moment" and fell back to raw VORP — which is why it called a sensible
+   handcuff a 107-spot reach. Both now call the same function, so the grade and
+   the suggestion cannot disagree by construction. */
+function slotShare(pos){ return Math.max(0.5,(baseIdx[pos]||S.numTeams)/S.numTeams); }
+function valueFor(pl,count){
+  const ss=slotShare(pl.p), surplus=(count+1)-ss;
+  const u=surplus<=0?1:ss/(ss+surplus*2);
+  return (pl.vorp>0?pl.vorp*u:pl.vorp)-(surplus>0?surplus*20:0);
+}
+/* A reach worth naming means you passed real value, not that a marginally
+   better body existed — at any pick a handful do. Roughly one round of the
+   room's picks. */
+const REACH_MIN=12;
 function markTies(){
   /* A per-player symmetric window, not fixed buckets. Bucketing from the top
      put two players one point apart into different groups purely because a
@@ -840,8 +906,7 @@ function planEnv(){
   const mustFill=roundsLeft<=stillRequired;
   const isFlexEligible=p=>['RB','WR','TE'].includes(p);
 
-  const startSlots={}; POSITIONS.forEach(p=>
-    startSlots[p]=Math.max(0.5,(baseIdx[p]||S.numTeams)/S.numTeams));
+  const startSlots={}; POSITIONS.forEach(p=>startSlots[p]=slotShare(p));
   const G=(S.scoring&&S.scoring.games>0)?S.scoring.games:17;
   const {hc}=rosterFlags();
   /* Effective starting slots for THIS roster right now. Rounding the global
@@ -869,15 +934,7 @@ function planEnv(){
      a bye plus injury really is worth slightly more than a fourth receiver —
      it was showing "+5" in confident green for a pick worth about three
      points, with no hint that everything on the board was marginal. */
-  const usefulness=(pos,count)=>{
-    const ss=startSlots[pos], surplus=(count+1)-ss;
-    return surplus<=0?1:ss/(ss+surplus*2);
-  };
-  const adjVal=(pl,count)=>{
-    const u=usefulness(pl.p,count), surplus=(count+1)-startSlots[pl.p];
-    const stack=surplus>0?surplus*20:0;
-    return (pl.vorp>0?pl.vorp*u:pl.vorp)-stack;
-  };
+  const adjVal=valueFor;          // shared with the recap; see valueFor above
   /* Honest marginal value of a body you would be BENCHING, in points, measured
      against streaming the position off waivers. Display only — it never moves
      a suggestion. */
@@ -933,7 +990,7 @@ function planScore(p,env){
   let next=-Infinity;
   for(const pos of POSITIONS){
     if(pos==='K'||pos==='DST'){          // gated exactly as the pick itself is
-      if(!(need[pos]>0 && roundsLeft-1<=4)) continue;
+      if(!(need[pos]>0 && roundsLeft-1<=7)) continue;
     }
     if(!canDraftWith(cnt,pos) && pos!==p.p) continue;
     const cAfter=cnt[pos]+(pos===p.p?1:0);
@@ -1474,18 +1531,62 @@ function positionalEdge(idx,rows){
   });
   return grp;
 }
-/* draft-day value, judged against OUR league-scored board. Beating the room's
-   ADP proves nothing by itself — the market prices half-PPR, this league does
-   not. A steal is a player taken after where these rules say he should go.
-   The ADP gap rides along as context only. */
+/* Draft-day value, judged against OUR league-scored board rather than the
+   room's ADP — the market prices half-PPR, this league does not.
+
+   STEALS use board fall (pick number minus board rank). That comparison is
+   self-limiting and stays honest: to fall 10 picks past board rank you have to
+   BE a top-N player still sitting there, which cannot happen once the board is
+   picked over.
+
+   REACHES cannot use the same yardstick, and used to. By pick 135 every player
+   ranked inside the top 135 is gone, so pick-minus-rank is guaranteed to come
+   back hugely negative no matter who you take — the metric was really just
+   measuring how deep into the draft you were and calling it your fault. It
+   labelled a pick at 135 as "107 early" when the rest of the room was taking
+   players of identical board rank on either side of it.
+
+   A reach is now what the words actually mean: better players were sitting
+   right there and you passed them. Count them at the moment of the pick. */
 function pickValue(idx){
-  return rosterOf(idx).map(p=>{
-    const pl=byId(p.playerId); if(!pl||pl.p==='K'||pl.p==='DST') return null;
-    return {pl,pick:p.pickNumber,delta:Math.round(p.pickNumber-pl.ovr),
-            adp:pl.a!=null?Math.round(p.pickNumber-pl.a):null};
-  }).filter(Boolean).sort((a,b)=>b.delta-a.delta);
+  const all=[...S.picks].sort((a,b)=>a.pickNumber-b.pickNumber);
+  const skill=scored.filter(p=>p.p!=='K'&&p.p!=='DST');
+  const taken=new Set();
+  const cnt={}; POSITIONS.forEach(p=>cnt[p]=0);
+  const out=[];
+  for(const pk of all){
+    const pl=byId(pk.playerId);
+    if(pk.teamIdx===idx&&pl&&pl.p!=='K'&&pl.p!=='DST'){
+      /* Value each alternative the way the engine would have, for the roster I
+         actually held at that moment — raw VORP counted players my own board
+         would never have taken (a fifth receiver, a third quarterback) and so
+         manufactured reaches out of reasonable picks. */
+      const mine=valueFor(pl,cnt[pl.p]||0);
+      let better=0, best=null, bestV=-Infinity;
+      for(const q of skill){
+        if(taken.has(q.id)||q.id===pl.id) continue;
+        if(q.p==='TE'&&(cnt.TE||0)>=1) continue;      // engine would never take one
+        const v=valueFor(q,cnt[q.p]||0);
+        if(v>mine){ better++; if(v>bestV){bestV=v;best=q;} }
+      }
+      out.push({pl,pick:pk.pickNumber,
+        delta:Math.round(pk.pickNumber-pl.ovr),      // board fall, for steals
+        better,                                       // better men left, for reaches
+        gap:bestV>-Infinity?bestV-mine:0,             // how much better the best one was
+        bestVal:bestV>-Infinity?bestV:0,
+        best,
+        adp:pl.a!=null?Math.round(pk.pickNumber-pl.a):null});
+    }
+    if(pl){ taken.add(pl.id); if(pk.teamIdx===idx) cnt[pl.p]=(cnt[pl.p]||0)+1; }
+  }
+  return out.sort((a,b)=>b.delta-a.delta);
 }
 /* if a starter goes down, how far does the roster fall at that position? */
+/* If a starter goes down, how far does the roster fall at that position?
+   With no backup the old answer was his ENTIRE projection — as if you would
+   field an empty slot for the rest of the year. You would not; you would stream
+   the position, which is what waiverPts measures. Losing a 143-point tight end
+   with nobody behind him costs the gap to a waiver tight end, not 143 points. */
 function fragility(idx,L){
   const out=[];
   POSITIONS.forEach(pos=>{
@@ -1494,8 +1595,10 @@ function fragility(idx,L){
     if(!st.length) return;
     const worst=st[st.length-1];
     const next=L.bench.filter(b=>b.p===pos)[0];
-    out.push({pos,drop:next?Math.round(worst.pts.total-next.pts.total):Math.round(worst.pts.total),
-              hasCover:!!next});
+    const fallback=Math.max(next?next.pts.total:0, waiverPts[pos]||0);
+    out.push({pos,drop:Math.round(Math.max(0,worst.pts.total-fallback)),
+              hasCover:!!next,
+              streamed:!next||(waiverPts[pos]||0)>(next?next.pts.total:0)});
   });
   return out.sort((a,b)=>b.drop-a.drop);
 }
@@ -1641,22 +1744,35 @@ function renderRecap(){
 
   if(vals.length){
     const steals=vals.filter(v=>v.delta>=10&&v.pl.vorp>0).slice(0,3);
-    const reaches=vals.filter(v=>v.delta<=-10).slice(-2).reverse();
+    /* A reach needs BOTH: a crowd of better men left, and one of them better by
+       more than two credible projection sets would disagree. The count alone
+       flagged last-round picks, where a dozen interchangeable bodies always
+       remain and nothing is at stake. */
+    /* A reach needs all three: a crowd of better men left, one of them better by
+       more than two credible projection sets would disagree, AND that man
+       actually worth something to this roster. Without the last test the final
+       round flagged as a reach because a spare quarterback graded above a sixth
+       running back — true, and worth nothing to either of them. */
+    const reaches=vals.filter(v=>v.better>=REACH_MIN&&v.gap>=TIE_BAND&&v.bestVal>0)
+      .sort((a,b)=>b.gap-a.gap).slice(0,2);
     h+=`<div class="card"><h3>Draft-day value</h3>`;
     if(steals.length){ steals.forEach(v=>h+=`<div class="slot"><span>${esc(v.pl.n)}
       <span class="sub">pick ${v.pick}</span></span><span class="num steal">${v.delta} past our board${v.adp!=null&&v.adp>=8?` · ${v.adp} past ADP`:''}</span></div>`); }
     else h+=`<div class="sub2">No picks landed more than 10 spots past where this league's scoring values them.</div>`;
     if(reaches.length){ reaches.forEach(v=>h+=`<div class="slot"><span>${esc(v.pl.n)}
-      <span class="sub">pick ${v.pick}</span></span><span class="num down">${Math.abs(v.delta)} early by our board</span></div>`); }
+      <span class="sub">pick ${v.pick}${v.best?` · ${esc(v.best.n)} was there`:''}</span></span>
+      <span class="num down">${v.better} better available</span></div>`); }
+    else h+=`<div class="sub2">No pick passed over a crowd of clearly better players.</div>`;
     h+=`</div>`;
   }
 
   if(frag.length){
     const worst=frag[0];
     h+=`<div class="card"><h3>If someone gets hurt</h3>`;
-    frag.slice(0,3).forEach(f=>h+=`<div class="slot"><span>${f.pos}${f.hasCover?'':' <span class="sub">no backup</span>'}</span>
+    frag.slice(0,3).forEach(f=>h+=`<div class="slot"><span>${f.pos}${f.streamed?' <span class="sub">would stream</span>':''}</span>
       <span class="num ${f.drop>60?'down':''}">−${f.drop} pts</span></div>`);
-    h+=`<div class="hint">Drop from your weakest starter to the best replacement on your bench.
+    h+=`<div class="hint">Drop from your weakest starter to the best replacement you could actually field —
+      your bench, or the waiver wire when that is better.
       ${worst.drop>60?`${worst.pos} is the position you can least afford to lose.`:''}</div></div>`;
   }
 
@@ -1887,12 +2003,22 @@ async function renderSetup(){
     <div class="fgrid">`;
   [['passYds','Pass yd'],['passTD','Pass TD'],['passInt','INT'],['rushYds','Rush yd'],
    ['rushTD','Rush TD'],['recYds','Rec yd'],['recPer5','Per 5 rec'],['recTD','Rec TD'],
+   ['passTD40','40yd pass TD'],['passTD50','50yd pass TD'],['rushTD40','40yd rush TD'],
+   ['rushTD50','50yd rush TD'],['recTD40','40yd rec TD'],['recTD50','50yd rec TD'],
    ['passGame300','300yd pass'],['passGame400','400yd pass'],['rushGame100','100yd rush'],
    ['rushGame200','200yd rush'],['recGame100','100yd rec'],['recGame200','200yd rec'],
-   ['fumbleLost','Fumble lost']].forEach(([k,l])=>
+   ['fumbleLost','Fumble lost'],
+   ['fg0','FG 0-39'],['fg40','FG 40-49'],['fg50','FG 50-59'],['fg60','FG 60+'],
+   ['fgMiss','FG missed'],['pat','PAT'],['patMiss','PAT missed'],
+   ['sack','Sack'],['dstInt','DST INT'],['fumbleRec','Fum rec'],['safety','Safety'],
+   ['defTD','DST TD']].forEach(([k,l])=>
     h+=`<label class="f"><span>${l}</span><input id="sc_${k}" type="number" step="0.01" value="${st.scoring[k]}"></label>`);
   h+=`</div>
-    <div class="hint">Reception points apply per game in blocks of five — four catches score nothing. Changing any value re-ranks the board immediately.</div>
+    <div class="hint">Reception points apply per game in blocks of five — four catches score nothing.
+      Long-touchdown and field-goal-distance bonuses are applied using league rates for how often
+      scores travel that far, since the projections give counts and not distances. Defensive
+      points- and yards-allowed brackets are integrated over a modelled per-game distribution
+      rather than applied to a season total. Changing any value re-ranks the board immediately.</div>
     <div class="eyebrow" style="margin-bottom:6px">Team names</div>
     <div id="teamNames"></div>
     <button class="act primary" id="saveBtn">${S?'Save settings':'Start draft'}</button>
