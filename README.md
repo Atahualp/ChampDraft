@@ -118,6 +118,27 @@ FantasyPros WR projections and ADP before draft night and rebuild.
 
 ## Build 17 (cache v17)
 
+**Ties made explicit.** Scoring 4for4's and FantasyPros' projections through the
+identical engine moves a top-100 player's VORP by a standard deviation of 17
+points (median 8) — same league, same maths, two credible sources. So gaps
+smaller than that are rounding, not ranking. Each player now reports every
+other player within that band of him (a symmetric per-player window, not fixed
+buckets, which would split two players one point apart purely on where a
+boundary fell). Board rows show the range, the pick sheet spells it out, and
+the suggestion panel says so when the top three are inside it. At the top of
+the current board that means Taylor, Chase, Nacua, Gibbs, Robinson and
+Smith-Njigba are one tie group spanning 8 points of VORP.
+
+**Expert gap on the card.** When our board disagrees with the Norris/Winks
+average by more than max(5, 30% of board rank) — scaled because six spots of
+disagreement at pick 1 is not the same animal as six spots at pick 100 — the
+card names both numbers and says which way to read it: this league's scoring
+when we are higher, unpriced risk or news when they are.
+
+Nothing about pick logic changed; these are display only.
+
+## Build 17 — engine notes
+
 **Bench in the Recap.** A card below the starting lineup lists every bench
 player with his projection, sorted by points, and tagged with what he is
 actually for: `handcuff` behind one of your own backs, `plugs week N` when he

@@ -87,6 +87,7 @@ header{position:sticky;top:0;z-index:40;background:var(--ink);
 .tag.ok{background:rgba(63,169,107,.18);color:var(--good,#3FA96B)}
 .tag.bad{background:rgba(226,90,90,.16);color:var(--bad,#E25A5A)}
 .tag.hc{background:rgba(230,160,60,.16);color:var(--accent)}
+.tie{color:var(--accent);font-weight:600}
 .sugghint{padding:8px 12px 2px;font-size:12px;line-height:1.45;color:var(--faint)}
 .sugg .wks{display:block;font-size:10px;color:var(--faint);letter-spacing:.02em}
 .num.flat{color:var(--faint)}
@@ -582,8 +583,45 @@ function rescoreAll(){
   });
   scored.sort((a,b)=>b.vorp-a.vorp);
   scored.forEach((x,i)=>x.ovr=i+1);
+  markTies();
   rebuildDraftRanks();
   computeWaiverLevel();          // needs dr, so it runs after rebuildDraftRanks
+}
+
+/* ---------- 3a. HOW PRECISE IS A VORP NUMBER? ------------------
+   Not very. Scoring 4for4's and FantasyPros' projections through the identical
+   engine and comparing the same top-100 players, VORP moves by a standard
+   deviation of 17 points and a median of 8 between the two — same league, same
+   maths, two credible sources. So a gap of a few points between two players is
+   not a ranking, it is rounding, and presenting it as an ordered list implies
+   precision the inputs cannot support.
+
+   Players inside this band of each other are marked as a tie group and the UI
+   says so instead of pretending #1 beats #4. Nothing about the ordering or the
+   suggestions changes — only the honesty of the display. */
+const TIE_BAND=17;
+function markTies(){
+  /* A per-player symmetric window, not fixed buckets. Bucketing from the top
+     put two players one point apart into different groups purely because a
+     boundary happened to fall between them, which is exactly the false
+     precision this is meant to remove. Each player instead reports everyone
+     within TIE_BAND of HIM. scored is sorted by vorp descending, so two
+     pointers sweep it in one pass. */
+  let lo=0,hi=0;
+  for(let i=0;i<scored.length;i++){
+    const v=scored[i].vorp;
+    while(scored[lo].vorp-v>TIE_BAND) lo++;
+    if(hi<i) hi=i;
+    while(hi+1<scored.length&&v-scored[hi+1].vorp<=TIE_BAND) hi++;
+    scored[i].tieFirst=scored[lo].ovr;
+    scored[i].tieLast=scored[hi].ovr;
+    scored[i].tieSize=hi-lo+1;
+  }
+}
+/* How far our board sits from where the two trusted analysts have him.
+   Positive means we are higher on him than they are. */
+function expertGap(p){
+  return (p.tr==null||p.ovr==null)?null:p.tr-p.ovr;
 }
 
 /* ---------- 3b. WAIVER LEVEL & OPTION VALUE -------------------
@@ -1115,7 +1153,8 @@ function renderBoard(){
         <span class="nm">${isWatched(p.id)?'<span class="starred">★</span> ':''}${esc(p.n)}${steal?' <span class="steal">◆</span>':''}${!gone&&hc.has(p.id)?' <span class="tagf tag-hc">HC</span>':''}${!gone&&stk.has(p.id)?' <span class="tagf tag-st">STACK</span>':''}</span>
         <span class="meta">${esc(p.t)}${p.b?' · bye '+p.b:''}
           ${p.r1!=null?` · ${esc(META.rank1abbr||'R1')}${p.r1}`:''}${p.r2!=null?` ${esc(META.rank2abbr||'R2')}${p.r2}`:''}${p.r3!=null?` ${esc(META.rank3abbr||'C')}${p.r3}`:''}
-          ${steal?`· <span class="steal">+${bd} vs board</span>`:diff!=null?`· <span class="${diff>0?'up':'down'}">ADP ${diff>0?'+':''}${diff}</span>`:''}
+          ${steal?`· <span class="steal">+${bd} vs board</span>`:diff!=null?`· <span class="${diff>0?'up':'down'}">ADP ${diff>0?'+':''}${diff}</span>`:''}${
+            p.tieSize>1&&p.ovr<=60?` · <span class="tie">≈${p.tieFirst}-${p.tieLast}</span>`:''}
           ${est?'<span class="est">est</span>':''}</span>
         <span class="gauge"><i style="width:${(g*100).toFixed(0)}%"></i></span>
       </span>
@@ -1147,6 +1186,11 @@ function renderSugg(){
   const allBench=worths.every(v=>v!=null);
   const topWorth=allBench?Math.max(...worths):null;
   let note='';
+  const spread=s.length>1?s[0].score-s[s.length-1].score:0;
+  if(!allBench&&spread<=TIE_BAND)
+    note=`<div class="sugghint"><span class="tie">≈ Effectively tied</span> — these are within
+      ${Math.round(spread)} point${Math.round(spread)===1?'':'s'} of each other, and two credible projection
+      sets routinely disagree by more. Any of them is a defensible pick.</div>`;
   if(allBench&&topWorth<8) note=`<div class="sugghint">Your starters are set — these are bench picks.
     The best is worth about <strong>${topWorth.toFixed(0)} point${Math.round(topWorth)===1?'':'s'}</strong>
     over streaming that spot off waivers. Take the upside you like.</div>`;
@@ -1198,6 +1242,26 @@ function openSheet(id){
   if(bl&&bl.n>=2) h+=`<div class="hint">You already have ${bl.n} starters off in week ${p.b}.</div>`;
   if(p.pts.bonusShare>0.05) h+=`<div class="hint">${Math.round(p.pts.bonusShare*100)}% of this total is modeled from per-game distributions, not exact.</div>`;
   if(p.p==='K'||p.p==='DST') h+=`<div class="hint">Scoring incomplete: no FG distance splits / per-game defensive brackets. Rank by published rank instead.</div>`;
+  if(p.tieSize>1){
+    const others=p.tieSize-1;
+    h+=`<div class="hint"><span class="tie">≈ Effectively tied</span> — ${others} other player${others===1?'':'s'}
+      (board ${p.tieFirst}–${p.tieLast}) sit${others===1?'s':''} within ${TIE_BAND} points of him. Two credible
+      projection sets disagree by more than that on the average top-100 player, so the order inside this
+      group is rounding, not a ranking. Take the one you believe in.</div>`;
+  }
+  { const eg=expertGap(p);
+    /* A fixed threshold was wrong: six spots of disagreement at pick 1 is a
+       different animal from six spots at pick 100, where the analysts are barely
+       ordering names. Scale it with board position so the note fires where the
+       disagreement actually costs something. */
+    if(eg!=null&&Math.abs(eg)>=Math.max(5,0.3*p.ovr)){
+      h+=`<div class="hint">${esc(META.rank1)} and ${esc(META.rank2)} average him
+        <strong>${Math.round(p.tr)}</strong> against our board's <strong>${p.ovr}</strong>.
+        ${eg>0?`This league's scoring is why we are higher — check the points breakdown below and decide
+                whether you buy it.`
+              :`They are higher on him than our projections are; they may be pricing risk or news the
+                projections have not caught up to.`}</div>`;
+    } }
   const bdS=Math.round(n-p.ovr);
   if(!isGone&&p.vorp>0&&bdS>=12&&p.p!=='K'&&p.p!=='DST'&&!(p.p==='TE'&&needsOf(S.myTeamIdx).cnt.TE>=1)){
     let st=`<div class="hint"><span class="steal">◆ Steal</span> — this league's scoring values him at pick ${p.ovr}; the room has passed him ${bdS} times since.`;
