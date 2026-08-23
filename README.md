@@ -116,6 +116,35 @@ Known data gap: Keenan Allen (now IND) has no projection row — the FantasyPros
 exports predate his move, and the ADP file still lists him on LAC. Re-export
 FantasyPros WR projections and ADP before draft night and rebuild.
 
+## Build 19 (cache v19)
+
+**The new 4for4 file is not new projections.** Every FF Pts change against the
+8/22 export is exactly 0.50 per reception, for every player — it is the same
+underlying projections re-scored as half-PPR instead of standard. The stat
+lines the engine actually scores are unchanged, so nothing needed re-importing.
+What did update: the 4for4 rank column (now a half-PPR ranking, which is closer
+to this league than standard was) and the composite ADP. FF Pts and 4for4's own
+VOR are deliberately ignored — neither can express 2.5 points per five catches,
+which is the whole reason this app exists. Half-PPR still overpays receptions
+relative to the bucket, which pays about 59% of half-PPR at typical volume, so
+the 4for4 rank remains a reference and not a target.
+
+**Stale saved scoring, fixed.** A session writes its own copy of the scoring
+when created, and safeScoring only falls back to a default when a saved value is
+missing or corrupt — protection against a bad session, but it meant the official
+rules shipped in build 18 could never reach an existing draft. Old sessions kept
+fumbleLost 0 and the 3/5 game bonuses while picking up the new long-touchdown
+keys they had never saved, running on two rulebooks at once and looking entirely
+plausible: Taylor 277 and above Gibbs, when the real rules give Gibbs 268 to
+Taylor's 267.
+
+Scoring now carries a version. A session built against an older rulebook that
+actually differs from the current one gets an amber banner naming what differs,
+with one tap to update. It is never applied silently — saved values might be a
+deliberate house rule, and overwriting someone's scoring unasked would be worse
+than the staleness. The offer fires on load and on session switch, so the
+co-owner's and the second household drafts get it too.
+
 ## Build 18 — official league scoring
 
 The league's real rules replaced the assumptions the engine was built on.

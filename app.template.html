@@ -154,14 +154,17 @@ header{position:sticky;top:0;z-index:40;background:var(--ink);
 .statline .v{font-family:var(--mono);font-size:16px;font-weight:700}
 
 /* ---- nav ---- */
-#updBar{position:fixed;left:12px;right:12px;top:calc(8px + env(safe-area-inset-top));
+#updBar,.updbar{position:fixed;left:12px;right:12px;top:calc(8px + env(safe-area-inset-top));
   z-index:60;display:none;align-items:center;justify-content:space-between;gap:10px;
   background:var(--good,#3FA96B);color:#fff;padding:11px 14px;border-radius:12px;
   font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.45)}
-#updBar.on{display:flex}
-#updBar button{border:0;border-radius:8px;padding:7px 12px;font-size:13px;font-weight:700;
+#updBar.on,.updbar.on{display:flex}
+#scoreBar{background:var(--accent);color:#12100a;top:calc(64px + env(safe-area-inset-top))}
+#scoreBar button{background:rgba(0,0,0,.18);color:#12100a}
+#scoreBar .x{background:transparent;color:#12100a}
+#updBar button,.updbar button{border:0;border-radius:8px;padding:7px 12px;font-size:13px;font-weight:700;
   background:rgba(255,255,255,.95);color:#12301F}
-#updBar .x{background:transparent;color:#fff;font-size:16px;padding:2px 4px;font-weight:400}
+#updBar .x,.updbar .x{background:transparent;color:#fff;font-size:16px;padding:2px 4px;font-weight:400}
 #cmpBar{position:fixed;left:12px;right:12px;bottom:calc(64px + env(safe-area-inset-bottom));
   z-index:48;display:none;align-items:center;justify-content:space-between;gap:8px;
   background:var(--accent);color:#fff;padding:11px 14px;border-radius:12px;font-size:13px;
@@ -340,7 +343,7 @@ label.f input,label.f select{width:100%;min-height:var(--tap);background:var(--s
    Player data and its labels live in PLAYERS / META below — swapping sources
    is a data change, never a code change.
    ============================================================ */
-const BUILD='18';   // keep in step with CACHE in sw.js
+const BUILD='19';   // keep in step with CACHE in sw.js
 /* Stamped fresh on every build. BUILD is the human version; BUILD_ID changes
    whenever ANY byte of the data changes, which is what the updater compares —
    an installed home-screen app has no address bar to refresh from. */
@@ -440,6 +443,15 @@ const DEFAULT_SCORING={
   fumbleLost:-2, games:17,
   cvRec:0.70,cvRush:0.55,cvPass:0.28
 };
+/* Bumped whenever the league rules above change. A session writes its own copy
+   of the scoring when it is created, and safeScoring only falls back to a
+   default when a saved value is MISSING or corrupt — which protects the engine
+   from a bad session but also means a rules correction can never reach an
+   existing draft. Shipping the real league rules produced exactly that: old
+   sessions kept fumbleLost 0 and the 3/5 game bonuses while picking up the new
+   long-touchdown keys they had never saved, so the board ran on two rulebooks
+   at once and looked plausible doing it. The version lets a session notice. */
+const SCORING_VERSION=2;
 /* Share of touchdowns long enough to earn the distance bonuses. The projections
    give TD counts, not TD lengths, so these are league rates applied uniformly —
    modeled, not exact, and they move everyone in the same direction. Both bonuses
@@ -508,6 +520,19 @@ const gamesOver=(total,thresh,cv,G)=>{
    separately so the UI can show how much of a total is estimated (spec §3.2) */
 /* FIX: defence in depth — a bad value stored by an older session must not
    poison the engine, so fall back to the default for any non-finite rule. */
+/* True when a session was built against an older rulebook AND actually differs
+   from it — a session that happens to match the current rules needs no prompt. */
+function scoringIsStale(st){
+  if(!st||!st.scoring) return false;
+  if((st.scoringVersion||1)>=SCORING_VERSION) return false;
+  return Object.keys(DEFAULT_SCORING).some(k=>
+    Number.isFinite(st.scoring[k])&&st.scoring[k]!==DEFAULT_SCORING[k]);
+}
+function scoringDiffs(st){
+  return Object.keys(DEFAULT_SCORING).filter(k=>
+    Number.isFinite(st.scoring[k])&&st.scoring[k]!==DEFAULT_SCORING[k])
+    .map(k=>({k,was:st.scoring[k],now:DEFAULT_SCORING[k]}));
+}
 function safeScoring(sc){
   const out={...DEFAULT_SCORING};
   Object.keys(DEFAULT_SCORING).forEach(k=>{
@@ -2073,7 +2098,7 @@ async function renderSetup(){
     setSimLabel(); ui.view='Board'; showView('Board'); render();
   };
   v.querySelectorAll('[data-open]').forEach(b=>b.onclick=async()=>{
-    S=await storage.loadSession(b.dataset.open); rescoreAll(); ui.view='Board'; showView('Board'); render();});
+    S=await storage.loadSession(b.dataset.open); rescoreAll(); maybeOfferScoringUpdate(); ui.view='Board'; showView('Board'); render();});
   v.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{
     const id=b.dataset.del;
     await storage.deleteSession(id);
@@ -2102,6 +2127,7 @@ async function startOrSave(){
     const styles={};for(let i=0;i<nt;i++) styles[i]=STYLES[Math.floor(Math.random()*STYLES.length)];
     S={sessionId:'s'+Date.now(),sessionName:$('#sName').value||'My league',createdAt:Date.now(),
        dataStamp:META.stamp,          // remember which dataset this draft was built on
+       scoringVersion:SCORING_VERSION,
        numTeams:nt,teams,myTeamIdx:slot-1,rosterSlots,scoring,picks:[],skip:[],watch:[],botStyles:styles};
   }else{
     Object.assign(S,{sessionName:$('#sName').value||S.sessionName,numTeams:nt,teams,
@@ -2200,6 +2226,27 @@ async function checkForUpdate(manual){
     return false;
   }
 }
+/* Offered once per session load, never applied silently: the saved values might
+   be a deliberate house rule, and overwriting someone's scoring without asking
+   would be worse than the staleness. */
+function maybeOfferScoringUpdate(){
+  if(!scoringIsStale(S)) return;
+  const d=scoringDiffs(S);
+  let el=$('#scoreBar');
+  if(!el){ el=document.createElement('div'); el.id='scoreBar'; el.className='updbar';
+    document.body.appendChild(el); }
+  const list=d.slice(0,4).map(x=>`${esc(x.k)} ${x.was}\u2192${x.now}`).join(', ');
+  el.innerHTML=`<span>This draft was set up under older scoring (${esc(list)}${d.length>4?`, +${d.length-4} more`:''}).
+    Update to the current league rules?</span>
+    <span><button id="scGo">Update</button><button class="x" id="scX" aria-label="Keep mine">✕</button></span>`;
+  el.classList.add('on');
+  $('#scGo').onclick=async()=>{
+    S.scoring={...DEFAULT_SCORING}; S.scoringVersion=SCORING_VERSION;
+    await storage.saveSession(S); rescoreAll(); el.classList.remove('on'); render();
+    toast('Scoring updated to current league rules.');
+  };
+  $('#scX').onclick=()=>{ S.scoringVersion=SCORING_VERSION; storage.saveSession(S); el.classList.remove('on'); };
+}
 function showUpdBar(newBuild){
   if(_updSeen===BUILD_ID+':'+newBuild) return;      // don't nag after a dismiss
   let el=$('#updBar');
@@ -2236,6 +2283,7 @@ function toast(msg){
   else { renderSetup(); showView('Setup'); }
   if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
   checkForUpdate(false);
+  maybeOfferScoringUpdate();
   /* Android keeps a home-screen app resident: resuming fires no navigation,
      so the launch check alone would never run again. */
   let _last=Date.now();
