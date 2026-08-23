@@ -144,6 +144,14 @@ header{position:sticky;top:0;z-index:40;background:var(--ink);
 .statline .v{font-family:var(--mono);font-size:16px;font-weight:700}
 
 /* ---- nav ---- */
+#updBar{position:fixed;left:12px;right:12px;top:calc(8px + env(safe-area-inset-top));
+  z-index:60;display:none;align-items:center;justify-content:space-between;gap:10px;
+  background:var(--good,#3FA96B);color:#fff;padding:11px 14px;border-radius:12px;
+  font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+#updBar.on{display:flex}
+#updBar button{border:0;border-radius:8px;padding:7px 12px;font-size:13px;font-weight:700;
+  background:rgba(255,255,255,.95);color:#12301F}
+#updBar .x{background:transparent;color:#fff;font-size:16px;padding:2px 4px;font-weight:400}
 #cmpBar{position:fixed;left:12px;right:12px;bottom:calc(64px + env(safe-area-inset-bottom));
   z-index:48;display:none;align-items:center;justify-content:space-between;gap:8px;
   background:var(--accent);color:#fff;padding:11px 14px;border-radius:12px;font-size:13px;
@@ -323,6 +331,10 @@ label.f input,label.f select{width:100%;min-height:var(--tap);background:var(--s
    is a data change, never a code change.
    ============================================================ */
 const BUILD='14';   // keep in step with CACHE in sw.js
+/* Stamped fresh on every build. BUILD is the human version; BUILD_ID changes
+   whenever ANY byte of the data changes, which is what the updater compares —
+   an installed home-screen app has no address bar to refresh from. */
+const BUILD_ID='/*__BUILDID__*/dev';
 const PLAYERS = /*__PLAYERS__*/[];
 /* Where the numbers came from. Everything user-visible reads its label from
    here, so swapping data sources is a data change, not a code change. */
@@ -1591,6 +1603,7 @@ function renderTeams(){
 }
 
 /* ---------- 10. SETUP ----------------------------------------- */
+/* (wireSetup binds #btnUpd below, after the card is written) */
 async function renderSetup(){
   const v=$('#viewSetup');
   const sessions=await storage.listSessions();
@@ -1647,7 +1660,8 @@ async function renderSetup(){
     if(hasR3) rl.push(`<strong>${esc(META.rank3)}</strong>`);
     srcBits.push(rl.join(', ')+' for ranks');
   }
-  h+=`<div class="card"><h3>Version</h3><div class="hint">Gridiron Marauder, build ${BUILD}. ${esc(META.stamp)}.</div></div>`;
+  h+=`<div class="card"><h3>Version</h3><div class="hint">Gridiron Marauder, build ${BUILD} · ${esc(BUILD_ID)}<br>${esc(META.stamp)}.</div>
+    <button class="act" id="btnUpd">Check for updates</button></div>`;
   h+=`<div class="card"><h3>About the numbers</h3>
     <div class="hint">${srcBits.join(', ')}. ${esc(META.stamp)}.<br><br>VORP compares each player to the last starter at his position, using this league's size and lineup. FLEX is resolved by pooling spare RB/WR/TE, not assumed.<br><br>
     Totals marked <span class="est">est</span> lean on modeled per-game distributions. Kickers and defenses can't be scored properly yet: the projections lack field-goal distance splits and per-game points-allowed brackets.<br><br>
@@ -1661,6 +1675,11 @@ async function renderSetup(){
       tn.appendChild(d);}};
   drawNames(); $('#sTeams').oninput=drawNames;
   $('#saveBtn').onclick=startOrSave;
+  if($('#btnUpd')) $('#btnUpd').onclick=async e=>{
+    e.target.disabled=true; e.target.textContent='Checking…';
+    await checkForUpdate(true);
+    e.target.disabled=false; e.target.textContent='Check for updates';
+  };
   if($('#mockBtn')) $('#mockBtn').onclick=async()=>{
     S.picks=[]; S.watch=[]; ui.auto=false;
     await save();
@@ -1773,6 +1792,54 @@ window.addEventListener('keydown',e=>{if(e.key==='Escape') closeSheet();});
   sh.addEventListener('touchcancel',end);
 })();
 
+/* ---------- 12. SELF-UPDATE ------------------------------------
+   Installed to the home screen there is no reload button, so the app checks
+   for itself: on launch, on resume from background, and on demand from Setup.
+   It fetches its own index.html with caching bypassed and compares BUILD_ID. */
+let _updSeen=null;
+async function checkForUpdate(manual){
+  try{
+    const res=await fetch('./index.html?_='+Date.now(),{cache:'no-store'});
+    if(!res.ok) throw new Error('http '+res.status);
+    const txt=await res.text();
+    const m=txt.match(/const BUILD_ID='([^']*)'/);
+    const rb=txt.match(/const BUILD='([^']*)'/);
+    if(!m) throw new Error('no build id');
+    if(m[1]===BUILD_ID){ if(manual) toast('You have the newest build.'); return false; }
+    showUpdBar(rb?rb[1]:null);
+    return true;
+  }catch(e){
+    if(manual) toast('Could not check — no connection.');
+    return false;
+  }
+}
+function showUpdBar(newBuild){
+  if(_updSeen===BUILD_ID+':'+newBuild) return;      // don't nag after a dismiss
+  let el=$('#updBar');
+  if(!el){ el=document.createElement('div'); el.id='updBar'; document.body.appendChild(el); }
+  el.innerHTML=`<span>New data available${newBuild&&newBuild!==BUILD?` (build ${esc(newBuild)})`:''} — your picks are saved.</span>
+    <span><button id="updGo">Reload</button><button class="x" id="updX" aria-label="Dismiss">✕</button></span>`;
+  el.classList.add('on');
+  $('#updGo').onclick=applyUpdate;
+  $('#updX').onclick=()=>{ _updSeen=BUILD_ID+':'+newBuild; el.classList.remove('on'); };
+}
+async function applyUpdate(){
+  try{ if('serviceWorker' in navigator){
+    const r=await navigator.serviceWorker.getRegistration();
+    if(r) await r.update();
+  }}catch(e){}
+  /* cache-busted so no layer between here and the server can serve the old file */
+  location.replace(location.pathname+'?u='+Date.now());
+}
+function toast(msg){
+  let t=$('#toast');
+  if(!t){ t=document.createElement('div'); t.id='toast';
+    t.style.cssText='position:fixed;left:50%;transform:translateX(-50%);bottom:calc(80px + env(safe-area-inset-bottom));z-index:70;background:var(--surface);color:var(--text);border:1px solid var(--line);padding:10px 16px;border-radius:10px;font-size:13px;box-shadow:0 6px 20px rgba(0,0,0,.4)';
+    document.body.appendChild(t); }
+  t.textContent=msg; t.style.opacity='1';
+  clearTimeout(t._t); t._t=setTimeout(()=>{t.style.opacity='0';},2600);
+}
+
 (async function init(){
   const vc=$('#verChip'); if(vc) vc.textContent='v'+BUILD;   // single source of truth
   const list=await storage.listSessions();
@@ -1780,6 +1847,15 @@ window.addEventListener('keydown',e=>{if(e.key==='Escape') closeSheet();});
     rescoreAll(); showView('Board'); render(); }
   else { renderSetup(); showView('Setup'); }
   if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+  checkForUpdate(false);
+  /* Android keeps a home-screen app resident: resuming fires no navigation,
+     so the launch check alone would never run again. */
+  let _last=Date.now();
+  document.addEventListener('visibilitychange',()=>{
+    if(document.visibilityState==='visible'&&Date.now()-_last>60000){
+      _last=Date.now(); checkForUpdate(false);
+    }
+  });
 })();
 </script>
 </body>

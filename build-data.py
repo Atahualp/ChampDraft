@@ -11,7 +11,7 @@ from; every label it displays is read from META.
 The config file describes YOUR sources. Nothing here is specific to
 FantasyPros, Yahoo, or ETR — see SOURCES.md for the contract.
 """
-import argparse, json, os, re, sys
+import argparse, hashlib, json, os, re, sys
 import pandas as pd, numpy as np
 
 # ---------------------------------------------------------------- schema ----
@@ -97,7 +97,7 @@ def build(cfg, root):
 
     # Optional extras, each joined on the same key. Missing ones are fine:
     # the app degrades rather than breaks when a column is absent.
-    for name, field in (('adp', 'a'), ('rank1', 'r1'), ('rank2', 'r2'), ('bye', 'b')):
+    for name, field in (('adp', 'a'), ('rank1', 'r1'), ('rank2', 'r2'), ('rank3', 'r3'), ('bye', 'b')):
         spec = cfg.get(name)
         if not spec:
             continue
@@ -164,6 +164,10 @@ def inject(template, out_path, players, meta):
             raise SystemExit(f'template is missing the {token} placeholder')
     src = src.replace('/*__PLAYERS__*/[]', json.dumps(players, separators=(',', ':')))
     src = src.replace('/*__META__*/{}', json.dumps(meta, separators=(',', ':')))
+    # Content hash of the baked file: changes iff the data changes. The in-app
+    # updater compares this, because an installed home-screen PWA has no
+    # address bar and therefore no way for the user to force a refresh.
+    src = src.replace('/*__BUILDID__*/dev', hashlib.sha1(src.encode('utf-8')).hexdigest()[:8])
     open(out_path, 'w').write(src)
     print(f"\n  wrote {out_path}  ({len(src)//1024} KB, {len(players)} players)")
     print('  remember to bump CACHE in sw.js so installed apps pick it up')
