@@ -296,7 +296,7 @@ label.f input,label.f select{width:100%;min-height:var(--tap);background:var(--s
   <div class="toggles">
     <button class="tg" id="tgHide" aria-pressed="true">Hide drafted</button>
     <button class="tg" id="tgSteal" aria-pressed="false">Steals only</button>
-    <button class="tg" id="tgSort">Sort: VORP</button>
+    <button class="tg" id="tgSort">Sort: VORP</button><!-- label set on boot from sortLabel -->
     <button class="tg" id="simBtn" aria-pressed="false">▶ Auto-sim</button>
   </div>
 </header>
@@ -330,7 +330,7 @@ label.f input,label.f select{width:100%;min-height:var(--tap);background:var(--s
    Player data and its labels live in PLAYERS / META below — swapping sources
    is a data change, never a code change.
    ============================================================ */
-const BUILD='14';   // keep in step with CACHE in sw.js
+const BUILD='15';   // keep in step with CACHE in sw.js
 /* Stamped fresh on every build. BUILD is the human version; BUILD_ID changes
    whenever ANY byte of the data changes, which is what the updater compares —
    an installed home-screen app has no address bar to refresh from. */
@@ -348,6 +348,13 @@ const hasR1=PLAYERS.some(p=>p.r1!=null), hasR2=PLAYERS.some(p=>p.r2!=null), hasR
    is their shared opinion, not one analyst's hot take. */
 PLAYERS.forEach(p=>{p.tr=(p.r1!=null&&p.r2!=null)?(p.r1+p.r2)/2:(p.r1!=null?p.r1:(p.r2!=null?p.r2:null));});
 const hasTrusted=PLAYERS.some(p=>p.tr!=null);
+/* one ordered cycle for the sort toggle: league math, then the market, then
+   each opinion source that actually has data behind it */
+const SORT_MODES=['vorp','adp'].concat(hasTrusted?['trusted']:[]).concat(hasR3?['rank3']:[]);
+function sortLabel(m){
+  return {vorp:'VORP',adp:'ADP',trusted:META.trustedAbbr||'Experts',
+          rank3:META.rank3abbr||META.rank3||'Consensus'}[m]||m;
+}
 
 /* ---------- 1. STORAGE LAYER ---------------------------------
    All persistence goes through this object. App logic never
@@ -906,6 +913,10 @@ function visiblePlayers(){
       &&!(p.p==='TE'&&myTE>=1)&&(n-p.ovr)>=12);}
   if(ui.sort==='adp') list.sort((a,b)=>marketRank(a)-marketRank(b));
   else if(ui.sort==='trusted') list.sort((a,b)=>(a.tr!=null?a.tr:999)-(b.tr!=null?b.tr:999));
+  /* rank3 (the consensus source) sorts unranked players to the bottom rather
+     than pretending they are rank 999 — K/DST have no 4for4 rank at all */
+  else if(ui.sort==='rank3') list.sort((a,b)=>
+    (a.r3!=null?a.r3:1e6)-(b.r3!=null?b.r3:1e6)||b.vorp-a.vorp);
   else list.sort((a,b)=>b.vorp-a.vorp);
   return list.slice(0,260);
 }
@@ -1748,8 +1759,9 @@ $('#q').oninput=e=>{ui.q=e.target.value;renderBoard();};
 $('#tgHide').onclick=e=>{ui.hide=!ui.hide;e.target.setAttribute('aria-pressed',ui.hide);renderBoard();};
 $('#tgSteal').onclick=e=>{ui.steals=!ui.steals;e.target.setAttribute('aria-pressed',ui.steals);renderBoard();};
 $('#tgSort').onclick=e=>{
-  ui.sort=ui.sort==='vorp'?'adp':(ui.sort==='adp'&&hasTrusted)?'trusted':'vorp';
-  e.target.textContent='Sort: '+({vorp:'VORP',adp:'ADP',trusted:META.trustedAbbr||'Experts'})[ui.sort];
+  const modes=SORT_MODES;
+  ui.sort=modes[(modes.indexOf(ui.sort)+1)%modes.length];
+  e.target.textContent='Sort: '+sortLabel(ui.sort);
   renderBoard();};
 $('#undoBtn').onclick=undoLast;
 $('#simBtn').onclick=toggleSim;
@@ -1842,6 +1854,7 @@ function toast(msg){
 
 (async function init(){
   const vc=$('#verChip'); if(vc) vc.textContent='v'+BUILD;   // single source of truth
+  const sb=$('#tgSort'); if(sb) sb.textContent='Sort: '+sortLabel(ui.sort);
   const list=await storage.listSessions();
   if(list.length){ S=list[0]; if(!S.skip)S.skip=[]; if(!S.botStyles)S.botStyles={}; if(!S.watch)S.watch=[];
     rescoreAll(); showView('Board'); render(); }

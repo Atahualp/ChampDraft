@@ -4,7 +4,7 @@
    Navigations now go network-first (fresh app when online, cached shell when
    not); static assets stay cache-first because they are content-addressed by
    the cache version. */
-const CACHE = 'gridiron-v14';
+const CACHE = 'gridiron-v15';
 const SHELL = ['./', './index.html', './manifest.json',
                './mark.png', './icon-192.png', './icon-512.png'];
 
