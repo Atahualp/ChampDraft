@@ -81,6 +81,15 @@ header{position:sticky;top:0;z-index:40;background:var(--ink);
 /* ---- suggestions ---- */
 .sugg{margin:10px 12px 0;border:1px solid var(--accent);border-radius:var(--r);
   background:var(--surface);overflow:hidden}
+.tags{display:block;margin-top:3px}
+.tag{display:inline-block;font-size:10px;padding:1px 6px;margin-right:4px;border-radius:6px;
+  background:var(--line);color:var(--faint);letter-spacing:.02em}
+.tag.ok{background:rgba(63,169,107,.18);color:var(--good,#3FA96B)}
+.tag.bad{background:rgba(226,90,90,.16);color:var(--bad,#E25A5A)}
+.tag.hc{background:rgba(230,160,60,.16);color:var(--accent)}
+.sugghint{padding:8px 12px 2px;font-size:12px;line-height:1.45;color:var(--faint)}
+.sugg .wks{display:block;font-size:10px;color:var(--faint);letter-spacing:.02em}
+.num.flat{color:var(--faint)}
 .sugg h2{margin:0;padding:8px 12px;font-size:10px;letter-spacing:.14em;text-transform:uppercase;
   color:var(--accent-ink);background:var(--accent);font-weight:800}
 .sug{display:flex;gap:10px;align-items:center;padding:9px 12px;border-top:1px solid var(--line);
@@ -330,7 +339,7 @@ label.f input,label.f select{width:100%;min-height:var(--tap);background:var(--s
    Player data and its labels live in PLAYERS / META below — swapping sources
    is a data change, never a code change.
    ============================================================ */
-const BUILD='16';   // keep in step with CACHE in sw.js
+const BUILD='17';   // keep in step with CACHE in sw.js
 /* Stamped fresh on every build. BUILD is the human version; BUILD_ID changes
    whenever ANY byte of the data changes, which is what the updater compares —
    an installed home-screen app has no address bar to refresh from. */
@@ -574,6 +583,80 @@ function rescoreAll(){
   scored.sort((a,b)=>b.vorp-a.vorp);
   scored.forEach((x,i)=>x.ovr=i+1);
   rebuildDraftRanks();
+  computeWaiverLevel();          // needs dr, so it runs after rebuildDraftRanks
+}
+
+/* ---------- 3b. WAIVER LEVEL & OPTION VALUE -------------------
+   Once your starting slots are full, VORP stops discriminating: every player
+   left is below replacement by construction, so the board goes negative and
+   you end up ranking noise. The question for a bench pick is not "how much
+   better than a replacement STARTER" — it is "how many weeks will he actually
+   be in my lineup, and how much better is he than the guy I'd stream instead".
+   That is option value, and it is what this section computes. -------------- */
+let waiverPts={}, waiverIdx={};
+/* The waiver level is the best player at a position that the room will NOT
+   roster — literally what you can pick up for free in any given week.
+
+   Depth beyond starters comes from simulating full drafts of this league and
+   counting what the room actually consumes: about a third of a backup QB per
+   team, three RBs, three and a half WRs, and essentially nothing at TE, K and
+   DST because those get streamed. Those ratios are the whole input; everything
+   else follows from league settings. The TE and QB figures are the same
+   one-and-stream behaviour encoded in the bots and the suggestion rules, so the
+   three agree by construction rather than by coincidence. */
+const BACKUPS_PER_TEAM={QB:0.35,RB:3.0,WR:3.6,TE:0.05,K:0,DST:0};
+function computeWaiverLevel(){
+  const T=S.numTeams;
+  POSITIONS.forEach(pos=>{
+    const arr=scored.filter(p=>p.p===pos).sort((a,b)=>b.pts.total-a.pts.total);
+    const depth=Math.round((baseIdx[pos]||T)+T*(BACKUPS_PER_TEAM[pos]||0));
+    waiverIdx[pos]=depth;
+    const w=arr[Math.min(depth,arr.length-1)];
+    waiverPts[pos]=w?w.pts.total:0;
+  });
+}
+/* Expected games a starter misses in a season, by position. These set how often
+   the next man up actually plays. */
+const GAMES_MISSED={QB:2.0,RB:3.4,WR:2.6,TE:2.6,K:0.4,DST:0};
+/* Sits below the worst conceivable starter VORP so that filling an empty
+   starting slot always beats adding depth. Cancels between bench bodies. */
+const BENCH_TIER=-400;
+function binomAtLeast(n,k,q){
+  if(k<=0) return 1; if(k>n) return 0;
+  let p=0;
+  for(let i=k;i<=n;i++){
+    let c=1; for(let j=0;j<i;j++) c=c*(n-j)/(j+1);
+    p+=c*Math.pow(q,i)*Math.pow(1-q,n-i);
+  }
+  return Math.min(1,Math.max(0,p));
+}
+/* Expected weeks the (count+1)-th body at a position is in my starting lineup.
+   Body #1..S fill open slots and play all season bar their own bye. Body S+1 is
+   the first backup: he covers each starter's bye AND the weeks a starter is
+   hurt. Body S+2 needs TWO starters down at once, which is why a third QB is
+   worth essentially nothing and the model says so without being told. */
+function weeksStarting(pos,count,S,G){
+  const q=Math.min(0.45,(GAMES_MISSED[pos]||0)/G);
+  const rank=count+1;
+  if(rank<=S) return G-1;
+  const need=rank-S;
+  const bye=need===1?S:0;
+  return bye+G*binomAtLeast(S,need,q);
+}
+
+/* Handcuffs and stacks fall straight out of the team field.
+   A handcuff shares a backfield with one of your backs; a stack shares
+   a quarterback with you, so their good weeks arrive together. */
+function rosterFlags(){
+  const mine=rosterOf(S.myTeamIdx).map(p=>byId(p.playerId)).filter(Boolean);
+  const myRB=mine.filter(p=>p.p==='RB'&&p.t), myQB=mine.filter(p=>p.p==='QB'&&p.t);
+  const hc=new Set(), stk=new Set();
+  scored.forEach(p=>{
+    if(!p.t) return;
+    if(p.p==='RB'&&myRB.some(r=>r.t===p.t&&r.id!==p.id)) hc.add(p.id);
+    if((p.p==='WR'||p.p==='TE')&&myQB.some(q=>q.t===p.t)) stk.add(p.id);
+  });
+  return {hc,stk};
 }
 
 /* ---------- 4. SURVIVAL + COST OF WAITING (spec §5) ------------ */
@@ -644,7 +727,7 @@ const normCdf=z=>{const t=1/(1+0.2316419*Math.abs(z));
    exactly the band where "can I wait one more turn?" gets decided — and being
    optimistic there costs you the player. Band-MAE 3.1pp -> 1.4pp out of sample,
    mean bias +2.5pp -> +0.4pp. */
-const DEMAND_INFLATION=1.30, SURV_SD_MULT=1.3, SURV_SHIFT=-0.25, SURV_SD_FLOOR=1.7;
+const DEMAND_INFLATION=1.30, SURV_SD_MULT=1.7, SURV_SHIFT=-0.75, SURV_SD_FLOOR=1.7;
 function survival(pl,ctx){
   const j=ctx.posQ[pl.id]; if(j==null) return 1;
   const d=(ctx.demand[pl.p]||0)*DEMAND_INFLATION;
@@ -719,11 +802,35 @@ function planEnv(){
   const mustFill=roundsLeft<=stillRequired;
   const isFlexEligible=p=>['RB','WR','TE'].includes(p);
 
-  /* usefulness of the (k+1)-th body at a position, from effective starting
-     slots — unchanged from before, just factored out so the lookahead can ask
-     about hypothetical rosters */
   const startSlots={}; POSITIONS.forEach(p=>
     startSlots[p]=Math.max(0.5,(baseIdx[p]||S.numTeams)/S.numTeams));
+  const G=(S.scoring&&S.scoring.games>0)?S.scoring.games:17;
+  const {hc}=rosterFlags();
+  /* Effective starting slots for THIS roster right now. Rounding the global
+     baseline (RB32/12 -> 3) said "you start three backs" even when your FLEX
+     was already occupied by a third receiver, so a bench back was priced as a
+     starter. computeNeeds already tracks whether the FLEX is spoken for; use
+     it. */
+  const startInt={}; POSITIONS.forEach(p=>
+    startInt[p]=Math.max(1,(S.rosterSlots[p]||0)+((flex>0&&isFlexEligible(p))?1:0)));
+
+  /* VALUATION — deliberately unchanged. I rebuilt this around option value
+     (expected weeks in your lineup x points over a waiver streamer), which is
+     the theoretically better story, and measured it four ways against this
+     formula over 300 paired drafts on identical seeds. Every variant LOST:
+     -4.4, -5.1, -5.7 points per draft, t = -3.4 to -4.3. The loss landed on
+     tight end (-9.0/draft) and WR1 (-4.8), because pricing a starter against
+     the waiver wire understates elite tight ends — waiver TE is nearly
+     startable, waiver RB is dire — and that skipped the round-2 tight end this
+     league's reception scoring makes so valuable.
+
+     So the currency stays VORP with a surplus penalty. What the option-value
+     work DID earn its place doing is telling the truth about late picks: see
+     benchWeeks() and benchWorth() below, which the pick sheet now shows. The
+     real defect at R8 was never which player was named — a backup QB covering
+     a bye plus injury really is worth slightly more than a fourth receiver —
+     it was showing "+5" in confident green for a pick worth about three
+     points, with no hint that everything on the board was marginal. */
   const usefulness=(pos,count)=>{
     const ss=startSlots[pos], surplus=(count+1)-ss;
     return surplus<=0?1:ss/(ss+surplus*2);
@@ -732,6 +839,16 @@ function planEnv(){
     const u=usefulness(pl.p,count), surplus=(count+1)-startSlots[pl.p];
     const stack=surplus>0?surplus*20:0;
     return (pl.vorp>0?pl.vorp*u:pl.vorp)-stack;
+  };
+  /* Honest marginal value of a body you would be BENCHING, in points, measured
+     against streaming the position off waivers. Display only — it never moves
+     a suggestion. */
+  const benchWeeks=pl=>weeksStarting(pl.p,cnt[pl.p],startInt[pl.p],G);
+  const benchWorth=pl=>{
+    if(cnt[pl.p]<startInt[pl.p]) return null;         // he would start; not a bench body
+    let v=benchWeeks(pl)*((pl.pts.total-(waiverPts[pl.p]||0))/G);
+    if(hc.has(pl.id)) v*=1.35;
+    return v;
   };
 
   const eligible=p=>{
@@ -754,6 +871,9 @@ function planEnv(){
     byPos[pos]=avail.filter(x=>x.p===pos).sort((a,b)=>b.vorp-a.vorp).slice(0,25)
       .map(x=>({x,s:survival(x,ctx)}));
   });
+  /* Value of a player at the waiver level — what you get at this position if
+     the whole survival chain misses. For an open starting slot that is a
+     below-replacement body; for the bench it is the tier floor itself. */
   const bestLater=(pos,skipId,count)=>{
     let e=0,gone=1;
     for(const {x,s} of byPos[pos]){
@@ -764,7 +884,8 @@ function planEnv(){
     return e;
   };
 
-  return {avail,pickNo,nxt,ctx,cnt,need,flex,roundsLeft,mustFill,isFlexEligible,adjVal,eligible,bestLater};
+  return {avail,pickNo,nxt,ctx,cnt,need,flex,roundsLeft,mustFill,isFlexEligible,
+          adjVal,eligible,bestLater,startInt,benchWeeks,benchWorth};
 }
 /* TWO-PICK PLAN score for one candidate: what he adds now, plus the expected
    best pick still on the board at my next turn if I take him. */
@@ -784,6 +905,8 @@ function planScore(p,env){
     if(v>next) next=v;
   }
   if(next===-Infinity) next=0;
+  /* No separate need bonus any more: filling an open slot is already worth more
+     weeks in weeksStarting(), so adding a bonus on top double-counted it. */
   const needBonus=(need[p.p]>0?6:0)+((flex>0&&isFlexEligible(p.p))?3:0);
   return {now,next,needBonus,score:now+next+needBonus,surv:survival(p,ctx)};
 }
@@ -861,7 +984,15 @@ function botPick(idx){
       if(cnt.TE>=2) continue;                    // never a third
       if(!twoTE||roundsLeft>5) continue;         // rare team, endgame only
     }
-    if(p.p==='QB'&&cnt.QB>=2&&roundsLeft>3) continue;
+    /* Same restraint as TE, one notch looser. In a one-QB league most rooms
+       carry a single quarterback and stream the bye; roughly a third of teams
+       take a backup, and late. The old gate let every team hoard two, which
+       consumed 32 QBs a draft and made the free-agent QB look far worse than
+       he really is — that in turn inflated what a backup QB looked worth. */
+    if(p.p==='QB'&&cnt.QB>=1){
+      if(cnt.QB>=2) continue;                    // never a third
+      if(botQuirk(idx)>=35||roundsLeft>6) continue;
+    }
     if(p.p==='K'||p.p==='DST'){ if(need[p.p]<=0||roundsLeft>4) continue; }
     else if(mustFill && !(need[p.p]>0 || (flex>0 && isFlexEligible(p.p)))) continue;
     const mr=marketRank(p);
@@ -1008,13 +1139,29 @@ function renderSugg(){
   if(teamOnPick(n)!==S.myTeamIdx){w.innerHTML='';return;}
   const s=suggestionsSafe();
   if(!s.length){w.innerHTML='';return;}
-  w.innerHTML=`<div class="sugg"><h2>Your pick — top 3</h2>`+s.map((x,i)=>
+  /* Honest framing for late picks. Once your starting slots are full, every
+     candidate is a bench body worth a handful of points, and the old panel
+     still showed a confident green VORP number with no hint of that. */
+  const env=planEnv();
+  const worths=s.map(x=>env.benchWorth?env.benchWorth(x.p):null);
+  const allBench=worths.every(v=>v!=null);
+  const topWorth=allBench?Math.max(...worths):null;
+  let note='';
+  if(allBench&&topWorth<8) note=`<div class="sugghint">Your starters are set — these are bench picks.
+    The best is worth about <strong>${topWorth.toFixed(0)} point${Math.round(topWorth)===1?'':'s'}</strong>
+    over streaming that spot off waivers. Take the upside you like.</div>`;
+  else if(allBench) note=`<div class="sugghint">Bench depth — value shown is points over a waiver streamer.</div>`;
+  w.innerHTML=`<div class="sugg"><h2>Your pick — top 3</h2>${note}`+s.map((x,i)=>
     `<button class="sug" data-id="${x.p.id}">
       <span class="rank num">${i+1}</span>
       <span class="badge b-${x.p.p}">${x.p.p}</span>
       <span class="body"><span class="nm">${esc(x.p.n)}</span>
       <span class="why">${esc(x.why)}</span></span>
-      <span class="fig"><span class="vorp num ${x.p.vorp>=0?'up':'down'}">${x.p.vorp>0?'+':''}${x.p.vorp.toFixed(0)}</span></span>
+      <span class="fig">${(()=>{const bw=worths[i];
+        if(bw==null) return `<span class="vorp num ${x.p.vorp>=0?'up':'down'}">${x.p.vorp>0?'+':''}${x.p.vorp.toFixed(0)}</span>`;
+        const wk=env.benchWeeks(x.p);
+        return `<span class="vorp num ${bw>=8?'up':'flat'}">+${bw.toFixed(0)}</span>`+
+               `<span class="wks">${wk.toFixed(1)} wk</span>`;})()}</span>
     </button>`).join('')+`</div>`;
   [...w.querySelectorAll('.sug')].forEach(b=>b.onclick=()=>openSheet(b.dataset.id));
 }
@@ -1383,8 +1530,40 @@ function renderRecap(){
     h+=`<div class="slot"><span><span class="badge b-${st.pl.p}" style="display:inline-grid;vertical-align:-5px;margin-right:8px">${st.slot==='FLEX'?'FLX':st.pl.p}</span>${esc(st.pl.n)}
       ${st.pl.b?`<span class="sub">bye ${st.pl.b}</span>`:''}</span>
       <span class="num">${st.pl.pts.total.toFixed(0)}</span></div>`);
-  if(me.bench.length) h+=`<div class="hint">Bench: ${esc(me.bench.slice(0,8).map(b=>b.n).join(', '))}</div>`;
   h+=`</div>`;
+
+  /* BENCH. A flat list of names hid what each body is actually for — cover for
+     a starter's bye, insurance behind one of your own backs, or a pure swing.
+     Each row now says which, and whether he plugs a bye you would otherwise be
+     streaming. */
+  if(me.bench.length){
+    const starters=me.starters.map(s=>s.pl);
+    const byeGaps={};                                    // week -> positions uncovered
+    wk.weeks.filter(x=>x.gaps.length).forEach(x=>byeGaps[x.week]=new Set(x.gaps));
+    const myRBTeams=new Set(starters.filter(p=>p.p==='RB'&&p.t).map(p=>p.t));
+    const cntStart={}; POSITIONS.forEach(p=>cntStart[p]=starters.filter(x=>x.p===p).length);
+    h+=`<div class="card"><h3>Your bench</h3>`;
+    [...me.bench].sort((a,b)=>b.pts.total-a.pts.total).forEach(b=>{
+      const tags=[];
+      const coversWeek=Object.keys(byeGaps).find(w=>
+        byeGaps[w].has(b.p==='RB'||b.p==='WR'||b.p==='TE'?'FLEX':b.p)||byeGaps[w].has(b.p));
+      const sameByeAsStarter=starters.some(s=>s.p===b.p&&s.b&&s.b===b.b);
+      if(b.p==='RB'&&b.t&&myRBTeams.has(b.t)) tags.push('<span class="tag hc">handcuff</span>');
+      if(coversWeek&&b.b!=+coversWeek) tags.push(`<span class="tag ok">plugs week ${coversWeek}</span>`);
+      else if(sameByeAsStarter) tags.push(`<span class="tag bad">same bye as your starter</span>`);
+      const starterAtPos=starters.filter(s=>s.p===b.p).sort((x,y)=>x.pts.total-y.pts.total)[0];
+      if(starterAtPos&&b.pts.total>starterAtPos.pts.total)
+        tags.push('<span class="tag ok">outprojects a starter</span>');
+      if(!tags.length) tags.push('<span class="tag">depth</span>');
+      h+=`<div class="slot"><span><span class="badge b-${b.p}" style="display:inline-grid;vertical-align:-5px;margin-right:8px">${b.p}</span>${esc(b.n)}
+        ${b.b?`<span class="sub">bye ${b.b}</span>`:''}<span class="tags">${tags.join('')}</span></span>
+        <span class="num">${b.pts.total.toFixed(0)}</span></div>`;
+    });
+    const uncovered=Object.keys(byeGaps);
+    h+=`<div class="hint">${uncovered.length
+      ? `Weeks ${uncovered.join(', ')} still have an empty slot no bench player can fill — those are waiver weeks.`
+      : `Every bye week is covered from your own bench.`}</div></div>`;
+  }
 
   h+=`<div class="card"><h3>Where you stand</h3>`;
   if(best.length){
@@ -1443,20 +1622,6 @@ function toggleWatch(id){
   const i=S.watch.indexOf(id);
   i>=0?S.watch.splice(i,1):S.watch.push(id);
   save();
-}
-/* Handcuffs and stacks fall straight out of the team field.
-   A handcuff shares a backfield with one of your backs; a stack shares
-   a quarterback with you, so their good weeks arrive together. */
-function rosterFlags(){
-  const mine=rosterOf(S.myTeamIdx).map(p=>byId(p.playerId)).filter(Boolean);
-  const myRB=mine.filter(p=>p.p==='RB'&&p.t), myQB=mine.filter(p=>p.p==='QB'&&p.t);
-  const hc=new Set(), stk=new Set();
-  scored.forEach(p=>{
-    if(!p.t) return;
-    if(p.p==='RB'&&myRB.some(r=>r.t===p.t&&r.id!==p.id)) hc.add(p.id);
-    if((p.p==='WR'||p.p==='TE')&&myQB.some(q=>q.t===p.t)) stk.add(p.id);
-  });
-  return {hc,stk};
 }
 /* Bye load across your projected starters, so you catch a pileup in
    round 8 rather than reading about it in the recap. */

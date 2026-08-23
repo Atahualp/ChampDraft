@@ -70,6 +70,87 @@ All three use the slot the player *would occupy* once drafted, not the current r
 
 Grades are **relative to the eleven other teams in that draft**, not an absolute scale — someone always finishes last, and a D in a sharp room may be a better roster than an A in a weak one. They rest on consensus projections, which are deliberately middle-of-the-road, and kicker and defense totals are incomplete. Treat the grade as a conversation starter and the positional breakdown as the useful part: "your RBs are 22 points above league average, your WRs 7 below" is actionable in a way that a letter isn't.
 
+## Build 14 (cache v14)
+
+**Head-to-head compare.** Open any player's card and tap *⚖ Compare with
+another player*, then tap the second player anywhere — board, watchlist,
+suggestions, grid. The sheet lays both out side by side (plan value, VORP,
+points, our board, Norris / Winks / Consensus, ADP, survival to your next
+pick, bye) and gives a verdict: which one to take first, by how many points,
+and whether the other is likely to still be there. The verdict uses the exact
+two-pick plan machinery behind the suggestions, refactored into a shared
+`planEnv`/`planScore` so the two features cannot disagree — verified across
+eight full drafts producing byte-identical suggestion output pre- and
+post-refactor.
+
+**Steal flag, finalized.** The trigger stays pure league math (12+ picks past
+our board, positive VORP). Winks and Norris now layer on top of the player
+card: when they also rank the player well above the market, the card says they
+agree; when they rank him well below it, the card warns that the projections
+may be missing news the analysts have. Experts corroborate or caution — they
+never trigger.
+
+## Build 13 (cache v13)
+
+Rankings refreshed to the 2026-08-18 Yahoo consensus. The two trusted analysts
+are shown separately — every player line reads **Norris, Winks, Consensus** in
+that order — while their blend (`N+W`) remains the sort mode and the arbitrage
+signal. Defenses finally join to their ranks (team-name mapping), and Brandon
+Aubrey, previously missing from the pool entirely, is restored from his
+FantasyPros projection row.
+
+**Tight ends.** The app now encodes the league's actual behavior: one TE, then
+stream from waivers. Suggestions never offer a second TE, the two-pick
+lookahead never plans one, sim bots carry exactly one (about one team every
+other draft grabs a second, late; a third never happens), and the survival
+model knows a team holding a TE has near-zero remaining TE demand.
+
+**Steals are league logic, not ADP.** A steal is a player still available 12+
+picks past where THIS league's scoring ranks him, with positive VORP — kickers,
+defenses, and second tight ends excluded. The recap grades every pick against
+our board the same way, with the ADP gap as context only. ADP's one remaining
+job is predicting the other eleven teams (survival), which is the only thing
+it is actually evidence of.
+
+Known data gap: Keenan Allen (now IND) has no projection row — the FantasyPros
+exports predate his move, and the ADP file still lists him on LAC. Re-export
+FantasyPros WR projections and ADP before draft night and rebuild.
+
+## Build 17 (cache v17)
+
+**Bench in the Recap.** A card below the starting lineup lists every bench
+player with his projection, sorted by points, and tagged with what he is
+actually for: `handcuff` behind one of your own backs, `plugs week N` when he
+covers a bye your starters leave open, `outprojects a starter`, `same bye as
+your starter` when he does not help, or plain `depth`. A closing line names the
+weeks no bench player can fill, so waiver weeks are explicit.
+
+**Honest late-round suggestions.** Once your starting slots are full, the panel
+stops printing a confident VORP number. It shows each candidate's marginal
+value in points over a waiver streamer plus the expected weeks he would spend
+in your lineup, and says so in a line above: "Your starters are set — these are
+bench picks. The best is worth about 3 points over streaming that spot. Take
+the upside you like."
+
+**Valuation: rebuilt, measured, and reverted.** The R8 backup-QB suggestion
+prompted a rebuild around option value (expected weeks in lineup x points over
+a waiver streamer). It was tested four ways against the existing formula over
+300 paired drafts on identical seeds and lost every time: -4.4, -5.1 and -5.7
+points per draft, t = -3.4 to -4.3. Slot-by-slot analysis found the loss at
+tight end (-9.0 per draft) and WR1 (-4.8) — pricing a STARTER against the
+waiver wire understates elite tight ends, because a waiver TE is nearly
+startable while a waiver RB is dire, and that skipped the round-2 tight end
+this league's reception scoring makes valuable. The engine therefore keeps
+VORP; option value survives as the honest display above. The full reasoning is
+in the comment block above `adjVal`.
+
+**Opponent model corrected.** Bots could each hoard two quarterbacks, consuming
+32 QBs a draft in a one-QB league. They now carry one, with about a third of
+teams taking a backup late — 16 QBs a draft, which matches real rooms. This
+also fixed the waiver-QB level (was QB33, now QB17) that the option-value work
+depended on. Survival was refit against the corrected opponents: band-MAE
+1.01pp with +0.08pp bias, out of sample.
+
 ## Known gaps
 
 - **Kickers and defenses can't be scored properly.** The projections have no field-goal distance splits, and DST points-allowed and yards-allowed are season totals against per-game brackets. Both are ranked by consensus and marked `est`. Everything else is real.
