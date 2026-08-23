@@ -116,6 +116,59 @@ Known data gap: Keenan Allen (now IND) has no projection row — the FantasyPros
 exports predate his move, and the ADP file still lists him on LAC. Re-export
 FantasyPros WR projections and ADP before draft night and rebuild.
 
+## Build 21 (cache v21)
+
+**Sort cycle is now VORP -> ADP -> AVG -> 4F.** The Norris+Winks blend was
+dropped as a sort mode in favour of the three-source average. A session that
+saved the old 'trusted' mode falls back to VORP rather than landing on a mode
+that no longer exists. The N+W blend still exists internally for the steal
+corroboration on the player card.
+
+**Player news on the card.** Injury designations, body part and note from
+Sleeper's public player feed — free, no key, and CORS-permissive, which matters
+because this is a static page on GitHub Pages with no server to proxy through.
+An injured player gets a coloured rule on his card and a dot on his board row:
+red for Out/IR/Doubtful, amber for Questionable. Healthy players say so, with
+the feed's age, because a blank card is ambiguous between "fine" and "no data".
+
+The feed is fetched once at boot, cached in IndexedDB for six hours, and
+refreshable from Setup. It is the only outbound call the app makes besides its
+own update check, and every path fails silently: a blocked or offline feed
+leaves the board fully usable and simply omits the news lines. Tested both ways.
+
+Three honest limits: designations lag practice reports by hours, so a hit is
+confirmation and an absence is never an all-clear; the feed carries status flags
+rather than beat-writer copy, so "left practice early" only appears once a team
+files it; and the call path could not be verified from the machine this was
+built on, so it needs one real test on wifi before draft day.
+
+**Bug found by the news test.** The in-memory storage fallback is shared between
+sessions and the new cache store, so a cached feed was being returned by
+listSessions and crashed the Setup screen on s.picks.length. Only records that
+are actually sessions leave that function now.
+
+## Build 20 (cache v20)
+
+**Reception buckets shown on the player card.** The bucket total is the one
+number on that card that is modelled rather than read off a projection, so the
+card now shows the working and, more usefully, a claim you can falsify: "115
+catches, about 6.7 a game, clears five in about 13.6 of 17 games and ten in 2.5
+— 16.2 buckets x 2.5 = 40 pts, 15% of his total." Count the 5-catch games in a
+real log and you know whether the model is generous for that player. Catches
+that arrive in lumps clear fewer buckets than an even spread, and nothing in the
+app used to tell you when that was happening.
+
+**AVG rank.** The mean of Norris, Winks and 4for4, shown beside them on the card
+and compactly on board rows. Averaged over whichever sources exist and labelled
+"(2 of 3)" when one is missing, which is every kicker and defence since 4for4
+ranks skill players only.
+
+Deliberately kept separate from the Norris+Winks blend that drives the sort mode
+and the steal corroboration. Those two are the arbitrage signal precisely
+because they are NOT the consensus; folding 4for4 into them would blunt the
+disagreement worth acting on. AVG is a reference for the eye and feeds no
+decision.
+
 ## Build 19 (cache v19)
 
 **The new 4for4 file is not new projections.** Every FF Pts change against the

@@ -88,6 +88,12 @@ header{position:sticky;top:0;z-index:40;background:var(--ink);
 .tag.bad{background:rgba(226,90,90,.16);color:var(--bad,#E25A5A)}
 .tag.hc{background:rgba(230,160,60,.16);color:var(--accent)}
 .tie{color:var(--accent);font-weight:600}
+.avgr{color:var(--text);font-weight:600}
+.ndot{margin-left:5px;font-size:9px;vertical-align:1px}
+.ndot.bad{color:var(--bad,#E25A5A)}
+.ndot.warn{color:var(--accent)}
+.hint.newsbad{border-left:3px solid var(--bad,#E25A5A);padding-left:9px}
+.hint.newswarn{border-left:3px solid var(--accent);padding-left:9px}
 .sugghint{padding:8px 12px 2px;font-size:12px;line-height:1.45;color:var(--faint)}
 .sugg .wks{display:block;font-size:10px;color:var(--faint);letter-spacing:.02em}
 .num.flat{color:var(--faint)}
@@ -343,7 +349,7 @@ label.f input,label.f select{width:100%;min-height:var(--tap);background:var(--s
    Player data and its labels live in PLAYERS / META below — swapping sources
    is a data change, never a code change.
    ============================================================ */
-const BUILD='19';   // keep in step with CACHE in sw.js
+const BUILD='21';   // keep in step with CACHE in sw.js
 /* Stamped fresh on every build. BUILD is the human version; BUILD_ID changes
    whenever ANY byte of the data changes, which is what the updater compares —
    an installed home-screen app has no address bar to refresh from. */
@@ -359,13 +365,24 @@ const hasR1=PLAYERS.some(p=>p.r1!=null), hasR2=PLAYERS.some(p=>p.r2!=null), hasR
 /* The two trusted experts are DISPLAYED separately but their blend stays the
    arbitrage signal — disagreement with the market is only meaningful when it
    is their shared opinion, not one analyst's hot take. */
-PLAYERS.forEach(p=>{p.tr=(p.r1!=null&&p.r2!=null)?(p.r1+p.r2)/2:(p.r1!=null?p.r1:(p.r2!=null?p.r2:null));});
+PLAYERS.forEach(p=>{
+  p.tr=(p.r1!=null&&p.r2!=null)?(p.r1+p.r2)/2:(p.r1!=null?p.r1:(p.r2!=null?p.r2:null));
+  /* Average of all three published ranks, over whichever are present. Kept
+     SEPARATE from p.tr: the two trusted analysts are the arbitrage signal
+     precisely because they are not the consensus, and folding the consensus
+     into them would blunt exactly the disagreement worth acting on. This is a
+     reference number for the eye, not an input to any decision. */
+  const rs=[p.r1,p.r2,p.r3].filter(x=>x!=null);
+  p.avg=rs.length?Math.round(rs.reduce((a,b)=>a+b,0)/rs.length):null;
+  p.avgN=rs.length;
+});
 const hasTrusted=PLAYERS.some(p=>p.tr!=null);
 /* one ordered cycle for the sort toggle: league math, then the market, then
    each opinion source that actually has data behind it */
-const SORT_MODES=['vorp','adp'].concat(hasTrusted?['trusted']:[]).concat(hasR3?['rank3']:[]);
+const hasAvg=PLAYERS.some(p=>p.avg!=null);
+const SORT_MODES=['vorp','adp'].concat(hasAvg?['avg']:[]).concat(hasR3?['rank3']:[]);
 function sortLabel(m){
-  return {vorp:'VORP',adp:'ADP',trusted:META.trustedAbbr||'Experts',
+  return {vorp:'VORP',adp:'ADP',avg:'AVG',
           rank3:META.rank3abbr||META.rank3||'Consensus'}[m]||m;
 }
 
@@ -375,7 +392,7 @@ function sortLabel(m){
    is a single-module change (spec §7).
 -------------------------------------------------------------- */
 const storage = (() => {
-  const DB='draftroom', STORE='sessions';
+  const DB='draftroom', STORE='sessions', CACHE_STORE='cache';
   let db=null, mem=new Map(), opening=null, degraded=false;
   /* FIX: the old version latched useMem=true on a 1.5s timeout and never
      retried, so one slow open meant the whole draft lived in RAM and died on
@@ -386,11 +403,12 @@ const storage = (() => {
     opening=new Promise(res=>{
       let rq, settled=false;
       const done=v=>{ if(!settled){settled=true; opening=null; res(v);} };
-      try{ rq=indexedDB.open(DB,1); }
+      try{ rq=indexedDB.open(DB,2); }
       catch(e){ degraded=true; return done(null); }
       rq.onupgradeneeded=()=>{
         const d=rq.result;
         if(!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE,{keyPath:'sessionId'});
+        if(!d.objectStoreNames.contains(CACHE_STORE)) d.createObjectStore(CACHE_STORE,{keyPath:'k'});
       };
       rq.onsuccess=()=>{ db=rq.result; degraded=false; done(db); };
       rq.onerror=()=>{ degraded=true; done(null); };
@@ -399,22 +417,30 @@ const storage = (() => {
     });
     return opening;
   }
-  const tx=(mode,fn)=>open().then(d=>{
-    if(!d) return fn(null);
+  const txIn=(store,mode,fn)=>open().then(d=>{
+    if(!d||!d.objectStoreNames.contains(store)) return fn(null);
     return new Promise((res,rej)=>{
-      const t=d.transaction(STORE,mode), s=t.objectStore(STORE);
+      const t=d.transaction(store,mode), s=t.objectStore(store);
       const out=fn(s); t.oncomplete=()=>res(out&&out.result!==undefined?out.result:out);
       t.onerror=()=>rej(t.error);
     });
   });
+  const tx=(mode,fn)=>txIn(STORE,mode,fn);
   return {
     async saveSession(s){ s.updatedAt=Date.now(); mem.set(s.sessionId,JSON.parse(JSON.stringify(s)));
       return tx('readwrite',st=>st&&st.put(s)); },
     async loadSession(id){ const r=await tx('readonly',st=>st&&st.get(id));
       return (r&&r.sessionId)?r:(mem.get(id)||null); },
+    async putCache(k,v){ mem.set('c:'+k,v); return txIn(CACHE_STORE,'readwrite',st=>st&&st.put({k,v})); },
+    async getCache(k){ const r=await txIn(CACHE_STORE,'readonly',st=>st&&st.get(k));
+      return (r&&r.v!==undefined)?r.v:(mem.get('c:'+k)||null); },
     async listSessions(){ const r=await tx('readonly',st=>st&&st.getAll());
+      /* FIX: the in-memory fallback map is shared with the news cache, so a
+         cached feed was being listed as a draft and crashed the Setup screen on
+         s.picks.length. Only real sessions leave this function. */
       const arr=(r&&r.length!==undefined)?r:[...mem.values()];
-      return arr.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)); },
+      return arr.filter(s=>s&&s.sessionId&&Array.isArray(s.picks))
+                .sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)); },
     async appendPick(id,pick){ const s=await this.loadSession(id); if(!s) return null;
       if(s.picks.some(p=>p.pickNumber===pick.pickNumber)) return s;  // dedupe by pickNumber
       s.picks.push(pick); await this.saveSession(s); return s; },
@@ -1183,7 +1209,8 @@ function visiblePlayers(){
     list=list.filter(p=>!drafted.has(p.id)&&p.vorp>0&&p.p!=='K'&&p.p!=='DST'
       &&!(p.p==='TE'&&myTE>=1)&&(n-p.ovr)>=12);}
   if(ui.sort==='adp') list.sort((a,b)=>marketRank(a)-marketRank(b));
-  else if(ui.sort==='trusted') list.sort((a,b)=>(a.tr!=null?a.tr:999)-(b.tr!=null?b.tr:999));
+  else if(ui.sort==='avg') list.sort((a,b)=>
+    (a.avg!=null?a.avg:1e6)-(b.avg!=null?b.avg:1e6)||b.vorp-a.vorp);
   /* rank3 (the consensus source) sorts unranked players to the bottom rather
      than pretending they are rank 999 — K/DST have no 4for4 rank at all */
   else if(ui.sort==='rank3') list.sort((a,b)=>
@@ -1224,6 +1251,10 @@ function renderBoard(){
   el.innerHTML=list.map(p=>{
     const gone=drafted.has(p.id);
     const diff=p.a!=null?Math.round(n-p.a):null;
+    const nw=newsFor(p);
+    const nwDot=nw&&(nw.st||nw.status)
+      ? `<span class="ndot ${NEWS_SEVERE.test(nw.st||nw.status||'')?'bad':'warn'}" title="${esc(nw.st||nw.status)}">●</span>`
+      : '';
     const bd=Math.round(n-p.ovr);              // fall vs OUR board, not the market
     const steal=!gone&&p.vorp>0&&bd>=12&&p.p!=='K'&&p.p!=='DST'&&!(p.p==='TE'&&myTE>=1);
     const est=p.pts.bonusShare>0.18||p.p==='K'||p.p==='DST';
@@ -1234,7 +1265,7 @@ function renderBoard(){
       <span class="body">
         <span class="nm">${isWatched(p.id)?'<span class="starred">★</span> ':''}${esc(p.n)}${steal?' <span class="steal">◆</span>':''}${!gone&&hc.has(p.id)?' <span class="tagf tag-hc">HC</span>':''}${!gone&&stk.has(p.id)?' <span class="tagf tag-st">STACK</span>':''}</span>
         <span class="meta">${esc(p.t)}${p.b?' · bye '+p.b:''}
-          ${p.r1!=null?` · ${esc(META.rank1abbr||'R1')}${p.r1}`:''}${p.r2!=null?` ${esc(META.rank2abbr||'R2')}${p.r2}`:''}${p.r3!=null?` ${esc(META.rank3abbr||'C')}${p.r3}`:''}
+          ${p.r1!=null?` · ${esc(META.rank1abbr||'R1')}${p.r1}`:''}${p.r2!=null?` ${esc(META.rank2abbr||'R2')}${p.r2}`:''}${p.r3!=null?` ${esc(META.rank3abbr||'C')}${p.r3}`:''}${p.avg!=null?` <span class="avgr">A${p.avg}</span>`:''}${nwDot}
           ${steal?`· <span class="steal">+${bd} vs board</span>`:diff!=null?`· <span class="${diff>0?'up':'down'}">ADP ${diff>0?'+':''}${diff}</span>`:''}${
             p.tieSize>1&&p.ovr<=60?` · <span class="tie">≈${p.tieFirst}-${p.tieLast}</span>`:''}
           ${est?'<span class="est">est</span>':''}</span>
@@ -1311,7 +1342,8 @@ function openSheet(id){
   let h=`<div class="grab"></div>
     <h3>${esc(p.n)} <span class="pill">${p.p}${posRankMap[p.id]||''}</span></h3>
     <div class="sub2">${esc(p.t)||'FA'}${p.b?` · bye ${p.b}`:''}
-      ${p.r1!=null?` · ${esc(META.rank1)} ${p.r1}`:''}${p.r2!=null?` · ${esc(META.rank2)} ${p.r2}`:''}${p.r3!=null?` · ${esc(META.rank3)} ${p.r3}`:''}</div>
+      ${p.r1!=null?` · ${esc(META.rank1)} ${p.r1}`:''}${p.r2!=null?` · ${esc(META.rank2)} ${p.r2}`:''}${p.r3!=null?` · ${esc(META.rank3)} ${p.r3}`:''}${
+        p.avg!=null?` · <span class="avgr">AVG ${p.avg}</span>${p.avgN<3?`<span class="sub"> (${p.avgN} of 3)</span>`:''}`:''}</div>
     <div class="statline">
       <div><div class="k">VORP</div><div class="v ${p.vorp>=0?'up':'down'}">${p.vorp>0?'+':''}${p.vorp.toFixed(0)}</div></div>
       <div><div class="k">Points</div><div class="v">${p.pts.total.toFixed(0)}</div></div>
@@ -1344,6 +1376,32 @@ function openSheet(id){
               :`They are higher on him than our projections are; they may be pricing risk or news the
                 projections have not caught up to.`}</div>`;
     } }
+  { const nw=newsFor(p);
+    if(nw&&(nw.st||nw.status)){
+      const sev=NEWS_SEVERE.test(nw.st||nw.status||'');
+      const bits=[nw.body?esc(nw.body):null,nw.note?esc(nw.note):null].filter(Boolean).join(' — ');
+      h+=`<div class="hint ${sev?'newsbad':'newswarn'}"><strong>${esc(nw.st||nw.status)}</strong>${bits?` · ${bits}`:''}
+        <span class="sub">feed ${esc(newsAge())}${NEWS.state==='stale'?', offline — may be out of date':''}</span></div>`;
+    } else if(NEWS.state==='ok'){
+      h+=`<div class="hint sub2">No injury designation in the feed as of ${esc(newsAge())}.
+        Designations lag practice reports — absence is not an all-clear.</div>`;
+    } }
+  /* The bucket is the one number on this card that is MODELLED rather than read
+     off a projection, so show the working. "About 13.6 games with 5+ catches" is
+     a claim that can be checked against a real game log in thirty seconds — if
+     his catches actually arrive in lumps, the estimate is generous and you can
+     see that for yourself instead of taking the total on faith. */
+  if((p.s.rec||0)>0&&S.scoring.recPer5){
+    const Gk=S.scoring.games>0?S.scoring.games:17, m=p.s.rec/Gk;
+    const g5=poissonSF(5,m)*Gk, g10=poissonSF(10,m)*Gk, g15=poissonSF(15,m)*Gk;
+    const buckets=g5+g10+g15, pts=buckets*S.scoring.recPer5;
+    const share=p.pts.total>0?Math.round(100*pts/p.pts.total):0;
+    h+=`<div class="hint"><strong>Reception buckets: ${pts.toFixed(0)} pts</strong> (${share}% of his total).
+      ${p.s.rec.toFixed(0)} catches ≈ ${m.toFixed(1)} a game, which clears five in about
+      <strong>${g5.toFixed(1)} of ${Gk} games</strong>${g10>=0.5?` and ten in ${g10.toFixed(1)}`:''} —
+      ${buckets.toFixed(1)} buckets × ${S.scoring.recPer5}.
+      Worth checking against his game log: catches that arrive in lumps clear fewer buckets than an even spread.</div>`;
+  }
   const bdS=Math.round(n-p.ovr);
   if(!isGone&&p.vorp>0&&bdS>=12&&p.p!=='K'&&p.p!=='DST'&&!(p.p==='TE'&&needsOf(S.myTeamIdx).cnt.TE>=1)){
     let st=`<div class="hint"><span class="steal">◆ Steal</span> — this league's scoring values him at pick ${p.ovr}; the room has passed him ${bdS} times since.`;
@@ -2072,7 +2130,9 @@ async function renderSetup(){
     srcBits.push(rl.join(', ')+' for ranks');
   }
   h+=`<div class="card"><h3>Version</h3><div class="hint">Gridiron Marauder, build ${BUILD} · ${esc(BUILD_ID)}<br>${esc(META.stamp)}.</div>
-    <button class="act" id="btnUpd">Check for updates</button></div>`;
+    <button class="act" id="btnUpd">Check for updates</button>
+    <div class="hint" id="newsState"></div>
+    <button class="act" id="btnNews">Refresh player news</button></div>`;
   h+=`<div class="card"><h3>About the numbers</h3>
     <div class="hint">${srcBits.join(', ')}. ${esc(META.stamp)}.<br><br>VORP compares each player to the last starter at his position, using this league's size and lineup. FLEX is resolved by pooling spare RB/WR/TE, not assumed.<br><br>
     Totals marked <span class="est">est</span> lean on modeled per-game distributions. Kickers and defenses can't be scored properly yet: the projections lack field-goal distance splits and per-game points-allowed brackets.<br><br>
@@ -2086,6 +2146,19 @@ async function renderSetup(){
       tn.appendChild(d);}};
   drawNames(); $('#sTeams').oninput=drawNames;
   $('#saveBtn').onclick=startOrSave;
+  const ns=$('#newsState');
+  if(ns) ns.innerHTML=NEWS.state==='ok'
+      ? `Injury feed loaded ${esc(newsAge())}. ${Object.keys(NEWS.by).length} players carry a designation.`
+      : NEWS.state==='stale' ? `Feed unreachable — showing a cached copy from ${esc(newsAge())}.`
+      : NEWS.state==='loading' ? 'Loading injury feed…'
+      : 'No injury feed loaded. Refresh on wifi before draft day to confirm it works.';
+  if($('#btnNews')) $('#btnNews').onclick=async e=>{
+    e.target.disabled=true; e.target.textContent='Refreshing…';
+    await loadNews(true);
+    e.target.disabled=false; e.target.textContent='Refresh player news';
+    renderSetup(); render();
+    toast(NEWS.state==='ok'?'Player news updated.':'Could not reach the news feed.');
+  };
   if($('#btnUpd')) $('#btnUpd').onclick=async e=>{
     e.target.disabled=true; e.target.textContent='Checking…';
     await checkForUpdate(true);
@@ -2161,6 +2234,7 @@ $('#tgHide').onclick=e=>{ui.hide=!ui.hide;e.target.setAttribute('aria-pressed',u
 $('#tgSteal').onclick=e=>{ui.steals=!ui.steals;e.target.setAttribute('aria-pressed',ui.steals);renderBoard();};
 $('#tgSort').onclick=e=>{
   const modes=SORT_MODES;
+  if(!modes.includes(ui.sort)) ui.sort='vorp';    // a 'trusted' left over from v20
   ui.sort=modes[(modes.indexOf(ui.sort)+1)%modes.length];
   e.target.textContent='Sort: '+sortLabel(ui.sort);
   renderBoard();};
@@ -2204,6 +2278,74 @@ window.addEventListener('keydown',e=>{if(e.key==='Escape') closeSheet();});
   sh.addEventListener('touchend',end);
   sh.addEventListener('touchcancel',end);
 })();
+
+/* ---------- 11b. PLAYER NEWS ----------------------------------
+   Injury designations and notes from Sleeper's public player feed: free, no key,
+   and it serves permissive CORS headers — which matters because this app is a
+   static page on GitHub Pages with no server of its own to proxy through.
+
+   Real caveats, stated plainly:
+   • This is the only outbound call the app makes besides its own update check.
+     Everything here fails silently and the draft carries on — a dead feed must
+     never cost a pick.
+   • Designations lag. A pull in Wednesday practice reaches this feed when the
+     team files a status change, which can be hours. Treat a hit as confirmation;
+     never treat absence as an all-clear.
+   • The payload is large, so it is fetched once and cached in IndexedDB.
+   • I could not reach this endpoint from the machine this was built on, so the
+     call path is unverified. Press "Refresh player news" in Setup on wifi well
+     before draft day and confirm a timestamp appears rather than an error. */
+const NEWS_URL='https://api.sleeper.app/v1/players/nfl';
+const NEWS_MAX_AGE=6*3600*1000;
+let NEWS={by:{},at:0,state:'idle'};
+const newsKey=(n,t)=>{
+  const s=String(n||'').toLowerCase().replace(/[^a-z ]/g,'')
+    .replace(/\s+(jr|sr|ii|iii|iv|v)$/,'').trim();
+  const p=s.split(' ').filter(Boolean);
+  return p.length?`${p[0][0]}.${p[p.length-1]}|${String(t||'').toUpperCase()}`:'';
+};
+function indexNews(raw){
+  const by={};
+  Object.values(raw||{}).forEach(p=>{
+    if(!p||!p.full_name) return;
+    const st=p.injury_status||null;
+    if(!st&&(!p.status||p.status==='Active')) return;      // nothing to report
+    by[newsKey(p.full_name,p.team||'')]=
+      {st,note:p.injury_notes||null,body:p.injury_body_part||null,status:p.status||null};
+  });
+  return by;
+}
+async function loadNews(force){
+  let cached=null;
+  try{ cached=await storage.getCache('news'); }catch(e){}
+  if(!force&&cached&&cached.by&&Date.now()-cached.at<NEWS_MAX_AGE){
+    NEWS={by:cached.by,at:cached.at,state:'ok'}; return NEWS;
+  }
+  NEWS.state='loading';
+  try{
+    const ctl=new AbortController(), timer=setTimeout(()=>ctl.abort(),12000);
+    const res=await fetch(NEWS_URL,{signal:ctl.signal});
+    clearTimeout(timer);
+    if(!res.ok) throw new Error('http '+res.status);
+    const by=indexNews(await res.json());
+    NEWS={by,at:Date.now(),state:'ok'};
+    try{ await storage.putCache('news',{by,at:NEWS.at}); }catch(e){}
+  }catch(e){
+    /* Offline, blocked, or the feed moved. Fall back to whatever was cached,
+       however old, and say how old rather than pretending it is current. */
+    NEWS=(cached&&cached.by)?{by:cached.by,at:cached.at,state:'stale'}
+                            :{by:{},at:0,state:'error'};
+  }
+  return NEWS;
+}
+function newsFor(p){ return NEWS.by[newsKey(p.n,p.t)]||null; }
+const NEWS_SEVERE=/^(Out|IR|Doubtful|PUP|Sus|NA|Inactive)/i;
+function newsAge(){
+  if(!NEWS.at) return '';
+  const h=(Date.now()-NEWS.at)/3600000;
+  return h<1?`${Math.max(1,Math.round(h*60))} min ago`
+           :(h<24?`${Math.round(h)}h ago`:`${Math.round(h/24)}d ago`);
+}
 
 /* ---------- 12. SELF-UPDATE ------------------------------------
    Installed to the home screen there is no reload button, so the app checks
@@ -2284,6 +2426,9 @@ function toast(msg){
   if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
   checkForUpdate(false);
   maybeOfferScoringUpdate();
+  /* Non-blocking: the board is already on screen and stays usable whatever
+     happens here. */
+  loadNews(false).then(()=>{ if(NEWS.state==='ok'||NEWS.state==='stale') render(); });
   /* Android keeps a home-screen app resident: resuming fires no navigation,
      so the launch check alone would never run again. */
   let _last=Date.now();
