@@ -116,6 +116,20 @@ Known data gap: Keenan Allen (now IND) has no projection row — the FantasyPros
 exports predate his move, and the ADP file still lists him on LAC. Re-export
 FantasyPros WR projections and ADP before draft night and rebuild.
 
+## Build 24 (cache v24)
+
+**Each feed reports for itself in Setup.** The status line covered only injuries,
+so a blocked ESPN call and a quiet news day looked identical — no headlines
+either way, and no way to tell which. Setup now reads: "Feeds loaded 2h ago.
+Injuries: 63 designations · depth chart: 1,412 players. ESPN headlines: 74
+articles across 58 players", or names the specific failure. They fail
+independently and now they report independently.
+
+**Two badges no longer collide.** The pill beside a player's name was his rank
+at his position on OUR board; the badge below was his slot on his TEAM's depth
+chart. Both rendered as bare "RB2" / "RB1" inches apart, which is a bad thing to
+misread on the clock. They now read "board RB2" and "depth RB1".
+
 ## Build 23 (cache v23)
 
 **Depth chart cross-checked against the live feed.** The baked slots come from a

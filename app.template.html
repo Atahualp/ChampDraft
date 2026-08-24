@@ -91,6 +91,7 @@ header{position:sticky;top:0;z-index:40;background:var(--ink);
 .avgr{color:var(--text);font-weight:600}
 .dcb{color:var(--text);font-weight:600}
 .dcb.off{color:var(--bad,#E25A5A);font-weight:400}
+.feedbad{color:var(--bad,#E25A5A)}
 .ndot{margin-left:5px;font-size:9px;vertical-align:1px}
 .ndot.bad{color:var(--bad,#E25A5A)}
 .ndot.warn{color:var(--accent)}
@@ -356,7 +357,7 @@ label.f input,label.f select{width:100%;min-height:var(--tap);background:var(--s
    Player data and its labels live in PLAYERS / META below — swapping sources
    is a data change, never a code change.
    ============================================================ */
-const BUILD='23';   // keep in step with CACHE in sw.js
+const BUILD='24';   // keep in step with CACHE in sw.js
 /* Stamped fresh on every build. BUILD is the human version; BUILD_ID changes
    whenever ANY byte of the data changes, which is what the updater compares —
    an installed home-screen app has no address bar to refresh from. */
@@ -1350,9 +1351,10 @@ function openSheet(id){
   const av=scored.filter(x=>!drafted.has(x.id));
   const surv=nxt?Math.round(survival(p,survivalContext(av,n+1,nxt))*100):null;
   let h=`<div class="grab"></div>
-    <h3>${esc(p.n)} <span class="pill">${p.p}${posRankMap[p.id]||''}</span></h3>
+    <h3>${esc(p.n)} <span class="pill" title="rank at his position on your board">board ${p.p}${posRankMap[p.id]||''}</span></h3>
     <div class="sub2">${esc(p.t)||'FA'}${p.b?` · bye ${p.b}`:''}
-      ${p.dc?` · <span class="dcb">${p.p}${p.dc}</span>`:` · <span class="dcb off">not on depth chart</span>`}${p.r1!=null?` · ${esc(META.rank1)} ${p.r1}`:''}${p.r2!=null?` · ${esc(META.rank2)} ${p.r2}`:''}${p.r3!=null?` · ${esc(META.rank3)} ${p.r3}`:''}${
+      ${p.dc?` · <span class="dcb" title="his slot on his team's depth chart">depth ${p.p}${p.dc}</span>`
+            :` · <span class="dcb off">not on depth chart</span>`}${p.r1!=null?` · ${esc(META.rank1)} ${p.r1}`:''}${p.r2!=null?` · ${esc(META.rank2)} ${p.r2}`:''}${p.r3!=null?` · ${esc(META.rank3)} ${p.r3}`:''}${
         p.avg!=null?` · <span class="avgr">AVG ${p.avg}</span>${p.avgN<3?`<span class="sub"> (${p.avgN} of 3)</span>`:''}`:''}</div>
     <div class="statline">
       <div><div class="k">VORP</div><div class="v ${p.vorp>=0?'up':'down'}">${p.vorp>0?'+':''}${p.vorp.toFixed(0)}</div></div>
@@ -2180,11 +2182,31 @@ async function renderSetup(){
   drawNames(); $('#sTeams').oninput=drawNames;
   $('#saveBtn').onclick=startOrSave;
   const ns=$('#newsState');
-  if(ns) ns.innerHTML=NEWS.state==='ok'
-      ? `Injury feed loaded ${esc(newsAge())}. ${Object.keys(NEWS.by).length} players carry a designation.`
-      : NEWS.state==='stale' ? `Feed unreachable — showing a cached copy from ${esc(newsAge())}.`
-      : NEWS.state==='loading' ? 'Loading injury feed…'
-      : 'No injury feed loaded. Refresh on wifi before draft day to confirm it works.';
+  /* Each source reports for itself. They fail independently, and lumping them
+     into one line meant a dead ESPN call and a quiet news day looked identical:
+     no headlines either way, no way to tell which. */
+  if(ns){
+    if(NEWS.state==='loading'){ ns.innerHTML='Loading feeds…'; }
+    else if(NEWS.state==='idle'||NEWS.state==='error'){
+      ns.innerHTML=`<span class="feedbad">No feeds loaded.</span> Refresh on wifi before draft day
+        to confirm they work — the board is fine either way, you just lose the news.`;
+    } else {
+      const inj=Object.keys(NEWS.by||{}).length;
+      const dep=Object.keys(NEWS.dco||{}).length;
+      const esp=NEWS.espn||{};
+      const arts=new Set(); Object.values(esp).forEach(l=>l.forEach(x=>arts.add(x.h)));
+      const stale=NEWS.state==='stale';
+      ns.innerHTML=
+        `<div>${stale?'<span class="feedbad">Feeds unreachable — cached copy</span>':'Feeds loaded'}
+           ${esc(newsAge())}.</div>
+         <div>Injuries: <strong>${inj}</strong> designation${inj===1?'':'s'} ·
+              depth chart: <strong>${dep}</strong> player${dep===1?'':'s'}.</div>
+         <div>ESPN headlines: ${Object.keys(esp).length
+            ? `<strong>${arts.size}</strong> article${arts.size===1?'':'s'} across
+               <strong>${Object.keys(esp).length}</strong> player${Object.keys(esp).length===1?'':'s'}`
+            : `<span class="feedbad">none returned</span> — either a quiet news day or the call was blocked`}.</div>`;
+    }
+  }
   if($('#btnNews')) $('#btnNews').onclick=async e=>{
     e.target.disabled=true; e.target.textContent='Refreshing…';
     await loadNews(true);
