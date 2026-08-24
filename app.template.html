@@ -89,11 +89,18 @@ header{position:sticky;top:0;z-index:40;background:var(--ink);
 .tag.hc{background:rgba(230,160,60,.16);color:var(--accent)}
 .tie{color:var(--accent);font-weight:600}
 .avgr{color:var(--text);font-weight:600}
+.dcb{color:var(--text);font-weight:600}
+.dcb.off{color:var(--bad,#E25A5A);font-weight:400}
 .ndot{margin-left:5px;font-size:9px;vertical-align:1px}
 .ndot.bad{color:var(--bad,#E25A5A)}
 .ndot.warn{color:var(--accent)}
 .hint.newsbad{border-left:3px solid var(--bad,#E25A5A);padding-left:9px}
 .hint.newswarn{border-left:3px solid var(--accent);padding-left:9px}
+.hint.newsgood{border-left:3px solid var(--good,#3FA96B);padding-left:9px}
+.hint.newshead{border-left:3px solid var(--line);padding-left:9px}
+.hint.newshead .hl{margin-top:5px;line-height:1.4}
+.hint.newshead a{color:var(--accent);text-decoration:none}
+.ndot.up{color:var(--good,#3FA96B)}
 .sugghint{padding:8px 12px 2px;font-size:12px;line-height:1.45;color:var(--faint)}
 .sugg .wks{display:block;font-size:10px;color:var(--faint);letter-spacing:.02em}
 .num.flat{color:var(--faint)}
@@ -349,7 +356,7 @@ label.f input,label.f select{width:100%;min-height:var(--tap);background:var(--s
    Player data and its labels live in PLAYERS / META below — swapping sources
    is a data change, never a code change.
    ============================================================ */
-const BUILD='21';   // keep in step with CACHE in sw.js
+const BUILD='23';   // keep in step with CACHE in sw.js
 /* Stamped fresh on every build. BUILD is the human version; BUILD_ID changes
    whenever ANY byte of the data changes, which is what the updater compares —
    an installed home-screen app has no address bar to refresh from. */
@@ -1251,6 +1258,9 @@ function renderBoard(){
   el.innerHTML=list.map(p=>{
     const gone=drafted.has(p.id);
     const diff=p.a!=null?Math.round(n-p.a):null;
+    const lv=liveDepth(p);
+    const moved=lv&&p.dc&&lv!==p.dc;
+    const mvDot=moved?`<span class="ndot ${lv<p.dc?'up':'warn'}" title="live feed has him ${p.p}${lv}">▲</span>`:'';
     const nw=newsFor(p);
     const nwDot=nw&&(nw.st||nw.status)
       ? `<span class="ndot ${NEWS_SEVERE.test(nw.st||nw.status||'')?'bad':'warn'}" title="${esc(nw.st||nw.status)}">●</span>`
@@ -1261,11 +1271,11 @@ function renderBoard(){
     const g=Math.max(0,Math.min(1,p.vorp/maxV));
     return `<button class="row ${gone?'gone':''}" data-id="${p.id}">
       <span class="idx num">${p.ovr}</span>
-      <span class="badge b-${p.p}">${p.p}</span>
+      <span class="badge b-${p.p}">${p.dc?p.p+p.dc:p.p}</span>
       <span class="body">
         <span class="nm">${isWatched(p.id)?'<span class="starred">★</span> ':''}${esc(p.n)}${steal?' <span class="steal">◆</span>':''}${!gone&&hc.has(p.id)?' <span class="tagf tag-hc">HC</span>':''}${!gone&&stk.has(p.id)?' <span class="tagf tag-st">STACK</span>':''}</span>
         <span class="meta">${esc(p.t)}${p.b?' · bye '+p.b:''}
-          ${p.r1!=null?` · ${esc(META.rank1abbr||'R1')}${p.r1}`:''}${p.r2!=null?` ${esc(META.rank2abbr||'R2')}${p.r2}`:''}${p.r3!=null?` ${esc(META.rank3abbr||'C')}${p.r3}`:''}${p.avg!=null?` <span class="avgr">A${p.avg}</span>`:''}${nwDot}
+          ${p.r1!=null?` · ${esc(META.rank1abbr||'R1')}${p.r1}`:''}${p.r2!=null?` ${esc(META.rank2abbr||'R2')}${p.r2}`:''}${p.r3!=null?` ${esc(META.rank3abbr||'C')}${p.r3}`:''}${p.avg!=null?` <span class="avgr">A${p.avg}</span>`:''}${nwDot}${mvDot}
           ${steal?`· <span class="steal">+${bd} vs board</span>`:diff!=null?`· <span class="${diff>0?'up':'down'}">ADP ${diff>0?'+':''}${diff}</span>`:''}${
             p.tieSize>1&&p.ovr<=60?` · <span class="tie">≈${p.tieFirst}-${p.tieLast}</span>`:''}
           ${est?'<span class="est">est</span>':''}</span>
@@ -1342,7 +1352,7 @@ function openSheet(id){
   let h=`<div class="grab"></div>
     <h3>${esc(p.n)} <span class="pill">${p.p}${posRankMap[p.id]||''}</span></h3>
     <div class="sub2">${esc(p.t)||'FA'}${p.b?` · bye ${p.b}`:''}
-      ${p.r1!=null?` · ${esc(META.rank1)} ${p.r1}`:''}${p.r2!=null?` · ${esc(META.rank2)} ${p.r2}`:''}${p.r3!=null?` · ${esc(META.rank3)} ${p.r3}`:''}${
+      ${p.dc?` · <span class="dcb">${p.p}${p.dc}</span>`:` · <span class="dcb off">not on depth chart</span>`}${p.r1!=null?` · ${esc(META.rank1)} ${p.r1}`:''}${p.r2!=null?` · ${esc(META.rank2)} ${p.r2}`:''}${p.r3!=null?` · ${esc(META.rank3)} ${p.r3}`:''}${
         p.avg!=null?` · <span class="avgr">AVG ${p.avg}</span>${p.avgN<3?`<span class="sub"> (${p.avgN} of 3)</span>`:''}`:''}</div>
     <div class="statline">
       <div><div class="k">VORP</div><div class="v ${p.vorp>=0?'up':'down'}">${p.vorp>0?'+':''}${p.vorp.toFixed(0)}</div></div>
@@ -1385,6 +1395,29 @@ function openSheet(id){
     } else if(NEWS.state==='ok'){
       h+=`<div class="hint sub2">No injury designation in the feed as of ${esc(newsAge())}.
         Designations lag practice reports — absence is not an all-clear.</div>`;
+    }
+    const live=liveDepth(p);
+    if(live&&p.dc&&live!==p.dc){
+      const up=live<p.dc;
+      h+=`<div class="hint ${up?'newsgood':'newswarn'}"><strong>Depth chart moved</strong> —
+        the 4for4 snapshot has him ${p.p}${p.dc}, the live feed has him ${p.p}${live}.
+        ${up?'A promotion since the chart was pulled.':'He has slipped since the chart was pulled.'}
+        Two sources, so check before you act.</div>`;
+    } else if(live&&!p.dc){
+      h+=`<div class="hint newswarn"><strong>${p.p}${live} on the live feed</strong> —
+        he was not on the 4for4 chart at all.</div>`;
+    }
+    const hl=headlines(p);
+    if(hl.length){
+      h+=`<div class="hint newshead"><strong>Headlines</strong>`+
+        hl.map(x=>`<div class="hl">${x.u?`<a href="${esc(x.u)}" target="_blank" rel="noopener">${esc(x.h)}</a>`:esc(x.h)}
+          ${x.at?`<span class="sub">${esc(agoFrom(x.at))}</span>`:''}</div>`).join('')+`</div>`;
+    }
+    const tr=trendFor(p);
+    if(tr&&tr.rel>=0.15){
+      h+=`<div class="hint newsgood"><strong>Being added in a lot of leagues</strong> —
+        ${tr.n.toLocaleString()} adds in 24 hours. Something moved: a promotion, a camp report, or
+        an injury ahead of him. Worth a look before you pass.</div>`;
     } }
   /* The bucket is the one number on this card that is MODELLED rather than read
      off a projection, so show the working. "About 13.6 games with 5+ catches" is
@@ -2296,6 +2329,22 @@ window.addEventListener('keydown',e=>{if(e.key==='Escape') closeSheet();});
      call path is unverified. Press "Refresh player news" in Setup on wifi well
      before draft day and confirm a timestamp appears rather than an error. */
 const NEWS_URL='https://api.sleeper.app/v1/players/nfl';
+/* Sleeper's player feed is injury designations only — no outlooks, no good news.
+   The one positive signal it does expose is waiver-add velocity: when a name
+   spikes across every league at once something happened to him, and in August
+   that is usually a promotion, a camp report, or the man ahead of him going
+   down. It is a "look into this" flag, not an explanation. */
+const TREND_URL='https://api.sleeper.app/v1/players/nfl/trending/add?lookback_hours=24&limit=50';
+/* ESPN's public news JSON: actual headlines, which is the one thing Sleeper has
+   none of. Each article carries athlete categories, so a headline can be pinned
+   to a player. Keyed on NAME ALONE — the category rarely carries a team, and a
+   headline about a player is about him wherever he plays. */
+const ESPN_URL='https://site.api.espn.com/apis/site/v2/sports/football/nfl/news?limit=100';
+const espnKey=n=>{
+  const s=String(n||'').toLowerCase().replace(/[^a-z ]/g,'')
+    .replace(/\s+(jr|sr|ii|iii|iv|v)$/,'').trim().split(' ').filter(Boolean);
+  return s.length?`${s[0][0]}.${s[s.length-1]}`:'';
+};
 const NEWS_MAX_AGE=6*3600*1000;
 let NEWS={by:{},at:0,state:'idle'};
 const newsKey=(n,t)=>{
@@ -2315,11 +2364,41 @@ function indexNews(raw){
   });
   return by;
 }
+/* Live depth-chart order, kept separate from the injury map because it is
+   wanted for EVERY player, not only the ones with something wrong. The baked
+   slots come from a 4for4 PDF snapshot; camp battles move after that, and a
+   promotion is exactly the kind of thing worth catching on draft morning. */
+function indexDepth(raw){
+  const d={};
+  Object.values(raw||{}).forEach(p=>{
+    if(!p||!p.full_name||!p.team) return;
+    const o=p.depth_chart_order;
+    if(typeof o==='number'&&o>0) d[newsKey(p.full_name,p.team)]=o;
+  });
+  return d;
+}
+function indexEspn(json){
+  const by={};
+  (json&&json.articles||[]).forEach(a=>{
+    const head=a.headline||a.description; if(!head) return;
+    const url=a.links&&a.links.web&&a.links.web.href||null;
+    (a.categories||[]).forEach(c=>{
+      const nm=(c.athlete&&(c.athlete.displayName||c.athlete.description))
+             ||(c.type==='athlete'?c.description:null);
+      if(!nm) return;
+      const k=espnKey(nm); if(!k) return;
+      (by[k]=by[k]||[]).push({h:head,u:url,at:a.published||a.lastModified||null});
+    });
+  });
+  Object.keys(by).forEach(k=>{ by[k]=by[k].slice(0,3); });
+  return by;
+}
 async function loadNews(force){
   let cached=null;
   try{ cached=await storage.getCache('news'); }catch(e){}
   if(!force&&cached&&cached.by&&Date.now()-cached.at<NEWS_MAX_AGE){
-    NEWS={by:cached.by,at:cached.at,state:'ok'}; return NEWS;
+    NEWS={by:cached.by,trend:cached.trend||{},dco:cached.dco||{},espn:cached.espn||{},
+          at:cached.at,state:'ok'}; return NEWS;
   }
   NEWS.state='loading';
   try{
@@ -2327,18 +2406,51 @@ async function loadNews(force){
     const res=await fetch(NEWS_URL,{signal:ctl.signal});
     clearTimeout(timer);
     if(!res.ok) throw new Error('http '+res.status);
-    const by=indexNews(await res.json());
-    NEWS={by,at:Date.now(),state:'ok'};
-    try{ await storage.putCache('news',{by,at:NEWS.at}); }catch(e){}
+    const raw=await res.json();
+    const by=indexNews(raw);
+    /* Best-effort second call, deliberately outside the feed's own try: if the
+       trending endpoint fails we still keep the injury data. */
+    let trend={};
+    try{
+      const tr=await fetch(TREND_URL);
+      if(tr.ok){
+        const arr=await tr.json();
+        const max=Math.max(1,...arr.map(x=>x.count||0));
+        arr.forEach(x=>{ const pl=raw[x.player_id];
+          if(pl&&pl.full_name)
+            trend[newsKey(pl.full_name,pl.team||'')]={n:x.count||0,rel:(x.count||0)/max}; });
+      }
+    }catch(e){}
+    const dco=indexDepth(raw);
+    /* Best-effort, deliberately outside the feed's own try: if ESPN is down we
+       still keep injuries, depth and trends. */
+    let espn={};
+    try{
+      const er=await fetch(ESPN_URL);
+      if(er.ok) espn=indexEspn(await er.json());
+    }catch(e){}
+    NEWS={by,trend,dco,espn,at:Date.now(),state:'ok'};
+    try{ await storage.putCache('news',{by,trend,dco,espn,at:NEWS.at}); }catch(e){}
   }catch(e){
     /* Offline, blocked, or the feed moved. Fall back to whatever was cached,
        however old, and say how old rather than pretending it is current. */
-    NEWS=(cached&&cached.by)?{by:cached.by,at:cached.at,state:'stale'}
-                            :{by:{},at:0,state:'error'};
+    NEWS=(cached&&cached.by)
+      ?{by:cached.by,trend:cached.trend||{},dco:cached.dco||{},espn:cached.espn||{},
+        at:cached.at,state:'stale'}
+      :{by:{},trend:{},dco:{},espn:{},at:0,state:'error'};
   }
   return NEWS;
 }
 function newsFor(p){ return NEWS.by[newsKey(p.n,p.t)]||null; }
+function trendFor(p){ return NEWS.trend?(NEWS.trend[newsKey(p.n,p.t)]||null):null; }
+function liveDepth(p){ return NEWS.dco?(NEWS.dco[newsKey(p.n,p.t)]||null):null; }
+function headlines(p){ return NEWS.espn?(NEWS.espn[espnKey(p.n)]||[]):[]; }
+function agoFrom(ts){
+  if(!ts) return '';
+  const h=(Date.now()-new Date(ts).getTime())/3600000;
+  if(!isFinite(h)||h<0) return '';
+  return h<1?'just now':(h<24?`${Math.round(h)}h ago`:`${Math.round(h/24)}d ago`);
+}
 const NEWS_SEVERE=/^(Out|IR|Doubtful|PUP|Sus|NA|Inactive)/i;
 function newsAge(){
   if(!NEWS.at) return '';

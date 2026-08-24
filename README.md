@@ -116,6 +116,60 @@ Known data gap: Keenan Allen (now IND) has no projection row — the FantasyPros
 exports predate his move, and the ADP file still lists him on LAC. Re-export
 FantasyPros WR projections and ADP before draft night and rebuild.
 
+## Build 23 (cache v23)
+
+**Depth chart cross-checked against the live feed.** The baked slots come from a
+4for4 PDF snapshot; camp battles move after that. Sleeper's player records carry
+depth_chart_order, so the card now compares the two and says which way it went:
+"the 4for4 snapshot has him RB2, the live feed has him RB1 — a promotion since
+the chart was pulled." Green for a promotion, amber for a slip, and a green
+triangle on the board row so it is visible while scanning rather than only on a
+tap. A player absent from the PDF but present on the live chart gets his live
+slot instead. The wording says two sources rather than asserting one is right,
+because Sleeper's depth order is itself patchy in the preseason.
+
+**ESPN headlines.** Sleeper carries designations and nothing else, so ESPN's
+public news JSON is now a second source: up to three headlines per player, each
+linked and timestamped. Articles are pinned to players through their athlete
+categories, keyed on name alone — the category rarely carries a team, and a
+headline about a player is about him wherever he plays.
+
+Both calls sit outside the main fetch's try block. If ESPN is down the injuries,
+depth and trends still land; if Sleeper is down the whole news layer goes quiet
+and the board is untouched. Tested both ways.
+
+Neither endpoint could be reached from the machine this was built on, so both
+paths remain unverified until someone presses Refresh player news on a real
+network.
+
+## Build 22 (cache v22)
+
+**Depth-chart slot on every player.** Parsed from the 4for4 depth-chart PDF and
+matched to 360 of 361 skill and kicker players. Board badges read RB1, WR3, TE2
+instead of a bare position, and the card carries the same. A player who appears
+on no depth chart at all is called out in red — Jake Moody is not on
+Washington's, which is exactly the kind of thing worth knowing before you spend
+a pick on him.
+
+Matching needed two fixes worth recording. The PDF drops generational suffixes
+and breaks hyphenated names across lines, so "Jaxon Smith-Njigba" arrives as
+"SmithNjigba" and "James Cook III" as "James Cook" — normalising to letters only
+and stripping suffixes recovered 30 players. And the bare "K" row label also
+matched the K in "J.K. Dobbins", splitting Denver's backfield in half and losing
+three backs; the marker now requires no adjacent letter or period. Three
+nickname mismatches (Kenny/Kenneth Gainwell, Chig/Chigoziem Okonkwo,
+Andy/Andres Borregales) fell to a surname fallback scoped to the right team and
+position.
+
+**Trending adds — the only good news Sleeper has.** The player feed carries
+injury designations and nothing else: no outlooks, no analysis, no positive
+news. What it does expose is waiver-add velocity, so a player spiking across
+leagues now gets a green line on his card with the 24-hour add count. In August
+that spike usually means a promotion, a camp report, or the man ahead of him
+going down. It is a "look into this" flag and the wording says so rather than
+pretending to explain. The trending call sits outside the main fetch's try
+block, so if it fails the injury data still lands.
+
 ## Build 21 (cache v21)
 
 **Sort cycle is now VORP -> ADP -> AVG -> 4F.** The Norris+Winks blend was
