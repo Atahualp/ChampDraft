@@ -99,6 +99,7 @@ header{position:sticky;top:0;z-index:40;background:var(--ink);
 .hint.newswarn{border-left:3px solid var(--accent);padding-left:9px}
 .hint.newsgood{border-left:3px solid var(--good,#3FA96B);padding-left:9px}
 .hint.newshead{border-left:3px solid var(--line);padding-left:9px}
+.hint.anote{border-left:3px solid var(--line);padding-left:9px;line-height:1.5}
 .hint.newshead .hl{margin-top:5px;line-height:1.4}
 .hint.newshead a{color:var(--accent);text-decoration:none}
 .ndot.up{color:var(--good,#3FA96B)}
@@ -357,7 +358,7 @@ label.f input,label.f select{width:100%;min-height:var(--tap);background:var(--s
    Player data and its labels live in PLAYERS / META below — swapping sources
    is a data change, never a code change.
    ============================================================ */
-const BUILD='24';   // keep in step with CACHE in sw.js
+const BUILD='25';   // keep in step with CACHE in sw.js
 /* Stamped fresh on every build. BUILD is the human version; BUILD_ID changes
    whenever ANY byte of the data changes, which is what the updater compares —
    an installed home-screen app has no address bar to refresh from. */
@@ -1262,6 +1263,10 @@ function renderBoard(){
     const lv=liveDepth(p);
     const moved=lv&&p.dc&&lv!==p.dc;
     const mvDot=moved?`<span class="ndot ${lv<p.dc?'up':'warn'}" title="live feed has him ${p.p}${lv}">▲</span>`:'';
+    const ptDot=(p.pt&&p.pt.tier!=='like'&&Math.abs(roundOf(n)-p.pt.rd)<=1)
+      ? `<span class="ndot up" title="Paulsen ${esc(p.pt.tier)}, round ${p.pt.rd}">★</span>` : '';
+    const flagDot=p.flag
+      ? `<span class="ndot ${p.flag==='out'?'bad':p.flag==='good'?'up':'warn'}" title="${esc(p.flagNote||'')}">◆</span>` : '';
     const nw=newsFor(p);
     const nwDot=nw&&(nw.st||nw.status)
       ? `<span class="ndot ${NEWS_SEVERE.test(nw.st||nw.status||'')?'bad':'warn'}" title="${esc(nw.st||nw.status)}">●</span>`
@@ -1276,7 +1281,7 @@ function renderBoard(){
       <span class="body">
         <span class="nm">${isWatched(p.id)?'<span class="starred">★</span> ':''}${esc(p.n)}${steal?' <span class="steal">◆</span>':''}${!gone&&hc.has(p.id)?' <span class="tagf tag-hc">HC</span>':''}${!gone&&stk.has(p.id)?' <span class="tagf tag-st">STACK</span>':''}</span>
         <span class="meta">${esc(p.t)}${p.b?' · bye '+p.b:''}
-          ${p.r1!=null?` · ${esc(META.rank1abbr||'R1')}${p.r1}`:''}${p.r2!=null?` ${esc(META.rank2abbr||'R2')}${p.r2}`:''}${p.r3!=null?` ${esc(META.rank3abbr||'C')}${p.r3}`:''}${p.avg!=null?` <span class="avgr">A${p.avg}</span>`:''}${nwDot}${mvDot}
+          ${p.r1!=null?` · ${esc(META.rank1abbr||'R1')}${p.r1}`:''}${p.r2!=null?` ${esc(META.rank2abbr||'R2')}${p.r2}`:''}${p.r3!=null?` ${esc(META.rank3abbr||'C')}${p.r3}`:''}${p.avg!=null?` <span class="avgr">A${p.avg}</span>`:''}${nwDot}${mvDot}${flagDot}${ptDot}
           ${steal?`· <span class="steal">+${bd} vs board</span>`:diff!=null?`· <span class="${diff>0?'up':'down'}">ADP ${diff>0?'+':''}${diff}</span>`:''}${
             p.tieSize>1&&p.ovr<=60?` · <span class="tie">≈${p.tieFirst}-${p.tieLast}</span>`:''}
           ${est?'<span class="est">est</span>':''}</span>
@@ -1388,6 +1393,34 @@ function openSheet(id){
               :`They are higher on him than our projections are; they may be pricing risk or news the
                 projections have not caught up to.`}</div>`;
     } }
+  /* Baked-in analyst material. Unlike the live feeds this cannot fail, cannot
+     go stale mid-draft, and needs no network — it ships with the build and is
+     dated by META.stamp. The flag is deliberately NOT folded into the
+     projections: it informs the pick rather than silently repricing it. */
+  if(p.flag){
+    const cls={out:'newsbad',watch:'newswarn',good:'newsgood'}[p.flag]||'newswarn';
+    const lbl={out:'Out',watch:'Monitor',good:'Good news'}[p.flag]||'Note';
+    h+=`<div class="hint ${cls}"><strong>${lbl}</strong> — ${esc(p.flagNote||'')}
+      <span class="sub">as of ${esc(META.newsAsOf||META.stamp||'')}</span></div>`;
+  }
+  if(p.pt){
+    const cur=roundOf(nextPickNumber());
+    const lbl={auto:'autopick',primary:'primary target',like:'a player he likes'}[p.pt.tier]||'target';
+    /* Loudest when you are actually in his round — a round-6 autopick is only
+       actionable in round 6. */
+    const live=Math.abs(cur-p.pt.rd)<=1;
+    h+=`<div class="hint ${live&&p.pt.tier!=='like'?'newsgood':'anote'}">
+      <strong>Paulsen: ${lbl}, round ${p.pt.rd}</strong>${live?` — you are in round ${cur}.`
+        :` — you are in round ${cur}.`}</div>`;
+  }
+  if(p.sos!=null&&p.p!=='K'){
+    const s=p.sos, hard=s<=-1.5, easy=s>=1.5;
+    if(hard||easy) h+=`<div class="hint ${easy?'newsgood':'newswarn'}">
+      <strong>Playoff schedule ${easy?'favourable':'tough'}</strong> — weeks 14-16 his opponents allow
+      ${Math.abs(s).toFixed(1)} points a game ${easy?'more':'fewer'} than league average.
+      ${hard?'Fine for the regular season; it bites in the weeks that decide the title.':''}</div>`;
+  }
+  if(p.note) h+=`<div class="hint anote"><strong>4for4 note</strong> ${esc(p.note)}</div>`;
   { const nw=newsFor(p);
     if(nw&&(nw.st||nw.status)){
       const sev=NEWS_SEVERE.test(nw.st||nw.status||'');

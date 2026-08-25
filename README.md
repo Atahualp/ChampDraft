@@ -116,6 +116,78 @@ Known data gap: Keenan Allen (now IND) has no projection row — the FantasyPros
 exports predate his move, and the ADP file still lists him on LAC. Re-export
 FantasyPros WR projections and ADP before draft night and rebuild.
 
+## Build 25 — playoff schedule and Paulsen targets
+
+**Playoff strength of schedule.** The card flags a player whose weeks 14-16
+opponents are materially easier or harder than average: "weeks 14-16 his
+opponents allow 2.3 points a game fewer than league average. Fine for the
+regular season; it bites in the weeks that decide the title."
+
+Opponent quality comes from the app's own DST projections — points allowed per
+game — rather than an outside rating, so the yardstick is the same one the board
+already trusts. Range runs from the Chargers, Broncos and Cardinals (easiest) to
+the Cowboys, Commanders and Eagles (hardest), a spread of about six points a
+game between the extremes. Only flagged past +/-1.5 points, since below that it
+is noise.
+
+**Paulsen's target board.** All 68 entries from his 8/21 Strategery table, with
+his own tiering preserved: autopick, primary target, or a player he likes at that
+ADP. Shown on every card, but it only lights up green and puts a star on the
+board row when you are actually within a round of his — a round-6 autopick is
+information in round 1 and a decision in round 6.
+
+Neither feeds the suggestion engine. Both are context for a human holding the
+pick.
+
+## Build 25 — 8/24 data drop (same version, refreshed data)
+
+**Projections, ADP and byes refreshed to the 8/24 4for4 export.** 36 stat lines
+genuinely changed: Ashton Jeanty -36 points (the ankle), Kayshon Boutte +37 (the
+Houston move), Xavier Hutchinson -33, Mike Washington Jr. +31.
+
+**Analyst notes on the player card.** 62 players carry 4for4's written scouting
+note, parsed out of the Notes PDF. This is the "player outlook" the live feeds
+could not provide: Sleeper carries status flags only, and ESPN needs a network.
+These ship inside the build, so they work on a dead connection and cannot go
+stale mid-draft.
+
+Extraction was the whole job. Straight text extraction joins words across line
+breaks ("back-to-backseasons"), and matching notes to players by position drifts
+whenever a card's prose spills onto the next page — that scored 44 of 96 correct.
+Rebuilding each of the three card columns from pdfplumber's word coordinates
+recovered the spacing, and matching each note to whichever player's surname
+appears in its opening clause removed the ordering dependency entirely. Every
+note is verified to name its own subject before it is kept; 62 survive that check
+and none are misattributed.
+
+**Dated news flags.** Ten players carry a flag from the 8/24 risers-and-fallers
+piece — Jordyn Tyson out roughly two months, Alvin Kamara out a month, Jeremiyah
+Love and Isiah Pacheco and Chuba Hubbard to monitor, Tucker Kraft and George
+Kittle cleared, Keenan Allen signed with the Colts. Red, amber or green on the
+card with a diamond on the board row.
+
+These are deliberately NOT folded into the projections. A flag informs the pick;
+silently repricing a player would hide the judgement inside a number.
+
+## Build 25 (cache v25)
+
+**Winks and Norris refreshed to 8/24.** 350 players matched, 283 blends moved.
+4for4 ranks, projections, ADP and depth charts are unchanged from the 8/22 pull.
+
+Two roster changes came out of the file rather than a news feed: **Kayshon
+Boutte is now Houston**, which moved his expert blend from 233 to 152 — the
+Jayden Higgins ACL created that opening — and **Trey Benson has been released**,
+so he carries no team. Both had their depth-chart slots cleared, since those
+came from the old team's chart and would otherwise be quietly wrong.
+
+**A name collision caught in review, worth recording.** The join key stripped
+generational suffixes, so "B. Robinson" (Bijan, ranked 2) and "B. Robinson Jr."
+(Brian, ranked 154) collapsed to the same key and Brian's rank landed on Bijan —
+the app's second overall player briefly showed an expert blend of 189. The key
+now preserves the suffix. A sanity pass over the largest rank moves is what
+surfaced it: a top-two player moving 187 places is not a ranking update, it is a
+bug, and the size of the move was the tell.
+
 ## Build 24 (cache v24)
 
 **Each feed reports for itself in Setup.** The status line covered only injuries,
