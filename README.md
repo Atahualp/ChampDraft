@@ -116,6 +116,61 @@ Known data gap: Keenan Allen (now IND) has no projection row — the FantasyPros
 exports predate his move, and the ADP file still lists him on LAC. Re-export
 FantasyPros WR projections and ADP before draft night and rebuild.
 
+## Build 26 — 8/28 data drop, analyst prose, note repairs
+
+**Projections, ADP, byes and all three rank columns refreshed.** 4for4's 8/28
+projections and their standard 6-pt-passing-TD rankings; Winks and Norris from
+the 8/28 Yahoo consensus; FantasyPros for kickers and defences, which 4for4 does
+not rank at all. 88 stat lines moved, 197 ADPs, 305 4for4 ranks.
+
+**The two analysts barely moved.** Only six players shifted 40 or more spots, and
+all six sit between 200 and 300 where the noise is largest — Penix up 93 for
+Norris, Cousins down 90. The top 150 is effectively unchanged since 8/24. A
+refresh that changes nothing important is still worth doing; it is the only way
+to know it changed nothing.
+
+**Two matching faults, both worth remembering.** 4for4 drops generational
+suffixes, so their "James Cook" and Yahoo's "J. Cook III" are different strings
+for one man, and they spell Jacksonville `JAX` where every other source uses
+`JAC`. Together those produced 87 phantom duplicate players on the first run.
+The fix keys on initial-plus-surname and keeps the suffix beside the key as a
+tiebreaker rather than inside it. One collision needs more than the suffix:
+Bijan Robinson and Brian Robinson Jr. are both Atlanta running backs printed as
+B. Robinson, and only the first name separates them.
+
+**Analyst prose on the card.** Two pieces, 32 notes across 28 players. The first
+is Paulsen's write-up of the same target board the build already carried — every
+player and round matches `pt`, so the tiering does not move and the argument is
+what is new. The second is a 4for4 piece on weeks 1-6, which is genuinely new
+information: the app already models the playoff weeks and had nothing on the
+opening month. Summaries are written at build time rather than lifted, because a
+phone card has room for the claim and not the essay.
+
+Neither feeds the suggestion engine, for the same reason the news flag does not:
+prose argues for a pick, it must not silently reprice one.
+
+**Two defects repaired in the inherited scouting notes.** Eight ran past the end
+of their own card into the next one, so the Brock Purdy note finished by
+discussing Kyle Pitts and the Isaiah Likely note ended on Michael Pittman. And
+Devontez Walker (WR BAL) was holding a note that describes Kenneth Walker III
+(RB KC) — the original self-naming check passed it because both men are called
+Walker. Surname matching cannot separate those two; only the content can. The
+note now sits on the Kansas City back, who previously had none.
+
+**Two things that look like regressions and are not.** The VORP baselines resolve
+to RB32 / WR28, not the WR30 written above in this file — v25 already resolved
+that way, so the older text is stale rather than the build being wrong. And
+Denver's defence surfaces around 20th overall on a raw VORP sort, which is the
+same artefact that put the Rams at 24th and the Texans at 27th in v25: DST
+scoring still has no per-game brackets. Denver rose because FantasyPros lifted
+their sack projection from 48 to 59.8.
+
+**Carried over unchanged:** depth-chart slots, playoff strength of schedule, the
+news flags, and Paulsen's tiers. The playoff schedule is unchanged because the
+schedule itself is; recomputing it against the new defensive projections would
+need an opponent map that none of these files contain, so those numbers still
+reflect the 8/24 pull and META says so.
+
 ## Build 25 — playoff schedule and Paulsen targets
 
 **Playoff strength of schedule.** The card flags a player whose weeks 14-16
