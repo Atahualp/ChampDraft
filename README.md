@@ -116,6 +116,31 @@ Known data gap: Keenan Allen (now IND) has no projection row — the FantasyPros
 exports predate his move, and the ADP file still lists him on LAC. Re-export
 FantasyPros WR projections and ADP before draft night and rebuild.
 
+## Build 28.1 — CSS collision on the board
+
+A regression I introduced in 28 and shipped. The sentiment pills added with the
+sleeper layer were styled with a bare `.gauge` class — a name the board row had
+already used for its VORP bar since v0.1.
+
+The two rules did not simply override one another. The bar rule sets
+`height:3px` and comes later, so it won the height, but the pill rule's
+`padding:2px 7px` and `1px` border were properties the bar rule never resets. So
+every one of the 260 board rows grew a padded, bordered box where a 3px bar
+should have been, which read on a phone as two grey slivers and a band of dead
+space under every player.
+
+Fixed by renaming the pills to `.sentiment-row` / `.sentiment-pill`. Distinct
+concerns get distinct names; the board bar keeps the name it has always had.
+
+**The test asserts computed layout, not stylesheet text**, because a rename that
+missed a call site would still pass a grep. It was verified against a
+deliberately re-broken build first: 4px of padding on all 260 rows there, 0 here.
+A test that has never failed has not been shown to work.
+
+**Swept for the same class of bug elsewhere.** Ten other selectors are declared
+more than once, and every one is a base rule paired with a media-query override
+— intentional cascade, not collision. `.gauge` was the only genuine case.
+
 ## Build 28 (revised) — FantasyPros sleeper layer
 
 Version deliberately held at 28 at the user's request; `BUILD_ID` changes

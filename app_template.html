@@ -108,12 +108,15 @@ details.rules[open]>summary::after{transform:rotate(90deg)}
 .fmtrow{display:flex;gap:6px;margin-bottom:10px}
 .fmtrow button{flex:1;padding:10px 8px;font-size:13px;line-height:1.25}
 .fmtrow button[aria-pressed="true"]{background:var(--accent);color:#0F1216;font-weight:600}
-.gauges{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
-.gauge{font-size:11px;padding:2px 7px;border-radius:10px;border:1px solid var(--line);
-  color:var(--dim);white-space:nowrap}
-.gauge b{color:var(--fg);font-weight:600}
-.gauge.g-hi{border-color:var(--good,#3FA96B)}
-.gauge.g-lo{border-color:var(--accent)}
+/* Named sentiment-* deliberately: .gauge was already taken by the VORP bar on
+   every board row, and a bare .gauge here inherited padding and a border onto
+   3px of bar, inflating all 260 rows. Distinct concerns get distinct names. */
+.sentiment-row{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
+.sentiment-pill{font-size:11px;padding:2px 7px;border-radius:10px;
+  border:1px solid var(--line);color:var(--dim);white-space:nowrap}
+.sentiment-pill b{color:var(--fg);font-weight:600}
+.sentiment-pill.g-hi{border-color:var(--good,#3FA96B)}
+.sentiment-pill.g-lo{border-color:var(--accent)}
 .hint.newshead .hl{margin-top:5px;line-height:1.4}
 .hint.newshead a{color:var(--accent);text-decoration:none}
 .ndot.up{color:var(--good,#3FA96B)}
@@ -372,7 +375,7 @@ label.f input,label.f select{width:100%;min-height:var(--tap);background:var(--s
    Player data and its labels live in PLAYERS / META below — swapping sources
    is a data change, never a code change.
    ============================================================ */
-const BUILD='28';   // keep in step with CACHE in sw.js
+const BUILD='28.1';   // keep in step with CACHE in sw.js
 /* Stamped fresh on every build. BUILD is the human version; BUILD_ID changes
    whenever ANY byte of the data changes, which is what the updater compares —
    an installed home-screen app has no address bar to refresh from. */
@@ -1513,12 +1516,12 @@ function openSheet(id){
     h+=`<div class="hint ${strong?'newsgood':'anote'}">
       <strong>Sleeper — ${e} of 26 experts</strong>
       ${p.slp.ecr!=null?` · ${esc(p.p)} ECR ${p.slp.ecr}`:``}${p.slp.adp!=null?`, ADP ${p.slp.adp}`:``}
-      ${p.snt?`<div class="gauges">`+
+      ${p.snt?`<div class="sentiment-row">`+
         [['Overall',p.snt.o],['Upside',p.snt.u],['Bust',p.snt.b]].map(([k,v])=>{
           /* Bust reads backwards: a high bust score is the bad one. */
           const good=(k==='Bust')?/Low/i.test(v):/High/i.test(v);
           const bad =(k==='Bust')?/High/i.test(v):/Low/i.test(v);
-          return `<span class="gauge ${good?'g-hi':(bad?'g-lo':'')}">${k} <b>${esc(v)}</b></span>`;
+          return `<span class="sentiment-pill ${good?'g-hi':(bad?'g-lo':'')}">${k} <b>${esc(v)}</b></span>`;
         }).join('')+`</div>`:``}</div>`;
   }
   if(p.note) h+=`<div class="hint anote"><strong>4for4 note</strong> ${esc(p.note)}</div>`;
