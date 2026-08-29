@@ -116,6 +116,123 @@ Known data gap: Keenan Allen (now IND) has no projection row — the FantasyPros
 exports predate his move, and the ADP file still lists him on LAC. Re-export
 FantasyPros WR projections and ADP before draft night and rebuild.
 
+## Build 28 (revised) — FantasyPros sleeper layer
+
+Version deliberately held at 28 at the user's request; `BUILD_ID` changes
+regardless, so the in-app update check still fires.
+
+Fifteen sentiment cards arrived alongside five sleeper tables, and every player
+carrying a blurb tops one of those lists — the tables are the frame and the
+blurbs are the detail on the same claim. So they went in as one layer rather
+than as loose notes.
+
+- `slp` — how many of the 26 polled experts named the player, plus the
+  positional ECR and ADP that framed the poll. 89 players.
+- `snt` — the Consensus Draft Sentiment gauges. 13 players.
+- prose — 27 further notes joining the existing analyst block, paraphrased
+  rather than lifted, each labelled with its author.
+
+**The expert count is the feature.** One expert out of 26 is noise and fourteen
+is a signal; a bare "sleeper" tag hides the difference, so the count is stated
+and only six or more is styled as a strong call. The bust gauge is scored
+backwards from the other two on purpose — a high bust reading is the bad one.
+
+**Defences needed a separate matcher.** They carry an empty team field, so they
+cannot key through the team-scoped index at all and are matched by name, as
+every other loader here already does. The build guard caught this by refusing to
+ship with two unmatched blurbs rather than dropping them quietly.
+
+**Disclosed:** the poll was run under half-PPR for RB/WR/TE and standard for
+QB/DST, so it matches neither of our leagues exactly. It is an opinion column and
+feeds no calculation.
+
+Checked and left alone: no sleeper's positional ADP disagrees with our own board
+by 20 or more, prose averages 243 characters and peaks at 335, and the densest
+card in the app is now Jordan Love at eight blocks — dense, but every block is
+earned.
+
+## Build 28 — audit fixes
+
+Three defects found reading the shipped v27, none of which any test would have
+caught because all three are prose rather than arithmetic.
+
+**The Setup page described the wrong league's rules.** The scoring hint stated
+"Reception points apply per game in blocks of five — four catches score nothing"
+as flat fact. On the PPR setup page that is simply untrue, and it sat directly
+beneath the inputs it was misdescribing. It now reads from the scoring actually
+in effect, and the yards-allowed sentence disappears for the league that has no
+yards-allowed scoring.
+
+**`META.notes` was never rendered anywhere.** Every caveat written into it since
+the field was introduced — the unmodelled PPR categories, the playoff-SOS
+provenance, the note that 4for4 VOR is unused — existed only in the file. The
+About card now prints it.
+
+**A stale claim about kickers and defences.** The About card still said the
+projections "lack field-goal distance splits and per-game points-allowed
+brackets", but the brackets have been modelled since build 25. Only the
+field-goal distances are genuinely missing, and that is now what it says.
+
+Also verified and left alone: Paulsen's 68 target tiers were written against
+Gridiron scoring but hold up under PPR ADP, with only two drifting three or more
+rounds from their round target. They are advisory prose and feed nothing, so
+they stay on both boards.
+
+## Build 27 — two leagues, one app
+
+A second league drafts tonight under full PPR. Rather than fork the build, the
+app now carries two formats and swaps between them.
+
+**Projections are NOT duplicated.** A reception is a reception; what differs is
+the rulebook that scores it. The engine already took the projection and the
+scoring table as separate arguments, so the same 4for4 stat lines serve both
+leagues. What genuinely differs between formats is *opinion* — where the market
+drafts a player and where the analysts rank him — so each player carries a `ppr`
+block holding ADP and the three rank columns, and `applyFormat()` swaps those
+four fields. Nothing else is duplicated.
+
+**Ranks never fall back across formats; ADP does.** A standard-format rank shown
+on a PPR board would be a different question's answer wearing the right label.
+ADP is the exception because there is only one draft market: the two 4for4 lists
+carry the same composite, differing by 0.94 picks on average, and refusing to
+fall back would blank kickers and defences for nothing.
+
+**Two things needed real code, not configuration.** There was no per-reception
+key at all — `recPer5` is the bucket rule — so PPR could not be expressed. And
+`paBrackets` is only a scalar multiplier over a hardcoded points-allowed table;
+the two leagues disagree on the *cut points*, not just the values, so a second
+table was required. The PPR table is much flatter (worst bracket -4 against our
+-10), and the visible consequence is that defences fall out of the top 30
+entirely in that league.
+
+**The trap this had to avoid.** `scoringIsStale()` compared every session against
+the house rulebook. With two presets that would have flagged the PPR draft on
+every key and offered to "fix" it — and accepting would have silently rewritten
+one league's scoring into the other's mid-draft. Staleness now compares a session
+against its own format, and `safeScoring` repairs against the same.
+
+**What the format actually changes.** Baselines move from RB32/WR28 to RB32/WR40:
+two FLEX slots and full PPR pull twelve more receivers into starter territory.
+The top 36 flips from 16 RB / 10 WR to 20 WR / 13 RB, Chase passes Gibbs at the
+top, and Josh Allen drops 49 points — exactly 24.6 projected passing touchdowns
+at two fewer points each.
+
+**Setup is now collapsible.** Thirty scoring inputs is a wall on a phone, so the
+rules fold away by default behind a one-line summary of what is actually in
+effect ("1 PPR · 4 pass TD · 2 custom"). A collapsed section that hides a change
+is worse than the wall it replaced, so any edit away from the preset is counted
+in that line. Format is locked once picks exist, for the same reason league size
+already was.
+
+**Known gaps in the PPR league.** It scores 2-point conversions, pick-6 thrown,
+blocked kicks, special-teams touchdowns and fumble-recovery touchdowns. No
+projection source publishes any of them, so none are modelled. Each is worth a
+point or two across a season and they fall on everyone roughly evenly, but the
+Setup card says so rather than staying quiet about it.
+
+**Team count was never specified** for the second league. The preset defaults to
+12 and it is settable in Setup before the first pick — worth checking.
+
 ## Build 26 — 8/28 data drop, analyst prose, note repairs
 
 **Projections, ADP, byes and all three rank columns refreshed.** 4for4's 8/28
